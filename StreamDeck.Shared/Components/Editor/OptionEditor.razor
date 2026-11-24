@@ -1,0 +1,464 @@
+@inject IAppPlatform Platform
+@inject ConfigService Config
+@inject INativeImagePicker NativeImagePicker
+<div class="settings-step settings-option">
+    <button type="button" class="settings-tile settings-tile-sm" @onclick="PickIconOrImage" aria-label="Changer l'icône" title="Changer l'icône">
+        <span class="keytile-preview" style="@TileStyle">
+            @if (HasImage)
+            {
+                <img src="@Option.ImageUrl" alt="" class="settings-tile-image" />
+            }
+            else
+            {
+                <KeyIcon Icon="@Option.Icon" />
+            }
+        </span>
+    </button>
+
+    <div class="settings-step-body">
+        <span class="settings-input settings-step-input">
+            <i class="fa-solid fa-tag"></i>
+            <input @bind="Option.Label" placeholder="Nom du choix" autocomplete="off" aria-label="Nom du choix" />
+        </span>
+
+        <ChoiceField Items="TypeChoices" Value="@TypeValue" ValueChanged="SetType"
+                     Title="Type de choix" PickerIcon="fa-solid fa-list-check" />
+
+        @switch (Option.Type)
+        {
+            case StepType.Script:
+                <span class="settings-input settings-step-input">
+                    <i class="fa-solid fa-terminal"></i>
+                    <input @bind="Option.Script" @bind:after="AutoNameFromScript" placeholder="Nom du script" autocomplete="off" spellcheck="false" aria-label="Nom du script" />
+                </span>
+                break;
+
+            case StepType.PcAction:
+                <ChoiceField Items="CommandChoices" Value="@Option.Command" ValueChanged="SetCommand"
+                             Title="Action Windows" PickerIcon="fa-solid fa-desktop" />
+                break;
+
+            case StepType.Wake:
+                <p class="settings-hint settings-step-hint">Envoie le réveil au PC visé par ce bouton (adresse MAC du bouton, sinon celle du PC).</p>
+                break;
+        }
+
+        <div class="settings-colors">
+            @foreach (var c in Palette)
+            {
+                <button type="button" class="@SwatchClass(c)" style="background:@c" @onclick="() => SetColor(c)" aria-label="Couleur"></button>
+            }
+        </div>
+
+        <div class="settings-kind" role="group" aria-label="Apparence du choix">
+            <button type="button" class="@(!_imageMode ? "settings-kind-btn is-active" : "settings-kind-btn")" @onclick="UseIcon">Icône</button>
+            <button type="button" class="@(_imageMode ? "settings-kind-btn is-active" : "settings-kind-btn")" @onclick="() => _imageMode = true">Image</button>
+        </div>
+
+        @if (_imageMode)
+        {
+            <div class="settings-field settings-step-input">
+                <div class="pathfield-row">
+                    <span class="settings-input settings-input-plain">
+                        <input @bind="Option.ImageUrl" @bind:event="oninput" placeholder="https://… (image, toujours carrée)" autocomplete="off" spellcheck="false" />
+                    </span>
+                    @if (NativeImagePicker.CanPick)
+                    {
+                        <button type="button" class="settings-btn pathfield-btn" @onclick="PickNativeImageAsync"><i class="fa-solid fa-upload"></i><span>Importer</span></button>
+                    }
+                    else
+                    {
+                        <InputFile OnChange="OnImageFileSelected" accept="image/*" class="settings-file-input" id="@_fileInputId" />
+                        <label class="settings-btn pathfield-btn" for="@_fileInputId"><i class="fa-solid fa-upload"></i><span>Importer</span></label>
+                    }
+                </div>
+                @if (_imageError is not null)
+                {
+                    <p class="settings-hint pathfield-error">@_imageError</p>
+                }
+            </div>
+        }
+
+        @* v1.34.18 : même correctif que ButtonEditor — la saisie au clavier ne dépend plus de Platform.CanListen. *@
+        <div class="settings-voice">
+                <span class="settings-label">Commande vocale (ce choix précis, sans passer par le popup)</span>
+                @if (Option.VoiceTriggers.Count > 0)
+                {
+                    <div class="settings-voice-tags">
+                        @foreach (var trigger in Option.VoiceTriggers)
+                        {
+                            <span class="settings-voice-tag">
+                                @trigger
+                                <button type="button" @onclick="() => RemoveTrigger(trigger)" aria-label="Retirer « @trigger »"><i class="fa-solid fa-xmark"></i></button>
+                            </span>
+                        }
+                    </div>
+                }
+                <span class="settings-input">
+                    <i class="fa-solid fa-microphone"></i>
+                    <input @bind="_newTrigger" @bind:event="oninput" placeholder="ex : lance spotify" autocomplete="off" spellcheck="false"
+                           @onkeydown="@(e => { if (e.Key == "Enter") AddTrigger(); })" />
+                    <button type="button" class="settings-input-action" @onclick="AddTrigger" disabled="@(_newTrigger.Trim().Length == 0)" aria-label="Ajouter"><i class="fa-solid fa-plus"></i></button>
+                </span>
+                @if (Platform.CanListen)
+                {
+                    <button type="button" class="settings-btn @(_listening ? "is-listening" : "")" @onclick="RecordTrigger" disabled="@_listening" title="Dis la phrase à voix haute, elle sera ajoutée telle quelle">
+                        <i class="@(_listening ? "fa-solid fa-ear-listen" : "fa-solid fa-microphone-lines")"></i><span>@(_listening ? "Écoute..." : "Enregistrer un trigger")</span>
+                    </button>
+                }
+                @if (Option.VoiceTriggers.Count > 0)
+                {
+                    <ToggleSwitch Label="Nécessite le mot de réveil" Description="Désactivé : ce choix réagit à tout moment, sans dire le mot de réveil d'abord."
+                                  Value="Option.VoiceRequiresWakeWord" ValueChanged="SetRequiresWakeWord" />
+                }
+            </div>
+
+        @if (Button.Kind == ButtonKind.Picker)
+        {
+            <div class="settings-variables">
+                <span class="settings-label">Variables ({nom} dans le script de ce choix)</span>
+                @foreach (var v in Option.Variables)
+                {
+                    <div class="settings-variable">
+                        <div class="settings-variable-head">
+                            <span class="settings-input settings-input-plain settings-variable-name">
+                                <input @bind="v.Name" @bind:event="oninput" placeholder="nom (ex : season)" autocomplete="off" spellcheck="false" />
+                            </span>
+                            <ChoiceField Items="VarKindChoices" Value="@(((int)v.Kind).ToString())" ValueChanged="@(val => SetVarKind(v, val))" PickerIcon="fa-solid fa-shapes" />
+                            <ChoiceField Items="VarModeChoices" Value="@(((int)v.Mode).ToString())" ValueChanged="@(val => SetVarMode(v, val))" PickerIcon="fa-solid fa-sliders" />
+                            <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveVariable(v)" aria-label="Supprimer cette variable" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                        @if (v.Kind == VariableKind.Number)
+                        {
+                            <div class="settings-variable-bounds">
+                                <label>Min <input type="number" @bind="v.Min" @bind:event="oninput" /></label>
+                                <label>Max <input type="number" @bind="v.Max" @bind:event="oninput" /></label>
+                            </div>
+                            @if (v.Mode == VariableMode.Fixed)
+                            {
+                                <div class="settings-variable-value">
+                                    <NumberStepper Value="@GetVarNumber(v)" ValueChanged="@(n => SetVarNumber(v, n))" Min="v.Min" Max="v.Max" />
+                                    <ToggleSwitch Label="Avance de 1 après chaque lancement réussi" Value="v.AutoIncrement" ValueChanged="@(on => SetAutoIncrement(v, on))" />
+                                </div>
+                            }
+                            else
+                            {
+                                <p class="settings-hint">Un sélecteur (borné @v.Min–@v.Max) sera proposé juste avant de lancer ce choix.</p>
+                            }
+                        }
+                        else
+                        {
+                            <label class="settings-variable-bounds">Longueur max <input type="number" @bind="v.MaxLength" @bind:event="oninput" min="1" max="500" /></label>
+                            @if (v.Mode == VariableMode.Fixed)
+                            {
+                                <span class="settings-input settings-input-plain settings-variable-value">
+                                    <input @bind="v.Value" @bind:event="oninput" maxlength="@v.MaxLength" placeholder="valeur" autocomplete="off" spellcheck="false" />
+                                </span>
+                            }
+                            else
+                            {
+                                <p class="settings-hint">Un champ texte sera proposé juste avant de lancer ce choix.</p>
+                            }
+                        }
+                    </div>
+                }
+                <button type="button" class="settings-btn" @onclick="AddVariable"><i class="fa-solid fa-plus"></i><span>Ajouter une variable</span></button>
+            </div>
+        }
+    </div>
+
+    <div class="settings-step-actions">
+        <button type="button" class="settings-btn settings-btn-icon" @onclick="() => Move(-1)" disabled="@IsFirst" aria-label="Monter le choix" title="Monter">
+            <i class="fa-solid fa-arrow-up"></i>
+        </button>
+        <button type="button" class="settings-btn settings-btn-icon" @onclick="() => Move(1)" disabled="@IsLast" aria-label="Descendre le choix" title="Descendre">
+            <i class="fa-solid fa-arrow-down"></i>
+        </button>
+        <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="Remove" aria-label="Supprimer le choix" title="Supprimer">
+            <i class="fa-solid fa-trash"></i>
+        </button>
+    </div>
+</div>
+
+@code {
+    private const long MaxImageBytes = 700 * 1024;
+
+    private static readonly string[] Palette =
+    {
+        "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+        "#ec4899", "#14b8a6", "#64748b", "#f97316", "#0ea5e9"
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> TypeChoices = new List<ChoiceItem>
+    {
+        new(((int)StepType.Script).ToString(), "Lancer un script", "Un script du dossier Script du PC", "fa-solid fa-terminal"),
+        new(((int)StepType.PcAction).ToString(), "Action Windows", "Média, volume, verrouillage, extinction…", "fa-solid fa-desktop"),
+        new(((int)StepType.Wake).ToString(), "Réveiller le PC", "Envoie le paquet Wake-on-LAN", "fa-solid fa-power-off")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> CommandChoices = PcCommands.All
+        .Select(c => new ChoiceItem(c.Id, c.Label, c.Description, c.Icon))
+        .ToList();
+
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+    [Parameter, EditorRequired] public DeckButton Button { get; set; } = new();
+    [Parameter, EditorRequired] public ChoiceOption Option { get; set; } = new();
+
+    private readonly string _fileInputId = $"img-{Guid.NewGuid():N}";
+    private bool _imageMode;
+    private string? _imageError;
+
+    protected override void OnInitialized() => _imageMode = !string.IsNullOrEmpty(Option.ImageUrl);
+
+    private bool HasImage => !string.IsNullOrEmpty(Option.ImageUrl);
+    private string TileStyle => $"--key-bg:{Option.Color};--key-fg:{ColorUtil.ContrastText(Option.Color)}";
+
+    private int Index => Button.Options.IndexOf(Option);
+    private bool IsFirst => Index <= 0;
+    private bool IsLast => Index >= Button.Options.Count - 1;
+    private string TypeValue => ((int)Option.Type).ToString();
+
+    private string SwatchClass(string color) =>
+        string.Equals(Option.Color, color, StringComparison.OrdinalIgnoreCase) ? "settings-swatch is-active" : "settings-swatch";
+
+    private void SetType(string value)
+    {
+        if (!int.TryParse(value, out var number) || !Enum.IsDefined((StepType)number)) return;
+        Option.Type = (StepType)number;
+        State.Notify();
+    }
+
+    /// <summary>Le nom du choix reprend celui du script tant qu'il n'a jamais été personnalisé (encore vide ou laissé
+    /// au nom générique donné à un nouveau choix) — pratique pour ne pas avoir à le retaper à chaque fois.</summary>
+    private void AutoNameFromScript()
+    {
+        if (Option.Label.Trim().Length == 0 || Option.Label == "Option")
+            Option.Label = Option.Script.Trim();
+        State.Notify();
+    }
+
+    private void SetCommand(string id)
+    {
+        Option.Command = id;
+        State.Notify();
+    }
+
+    private void SetColor(string color)
+    {
+        Option.Color = color;
+        State.Notify();
+    }
+
+    private void PickIconOrImage()
+    {
+        if (_imageMode) return;
+        State.RequestIcon(Option.Icon, cls => Option.Icon = cls);
+    }
+
+    private void UseIcon()
+    {
+        _imageMode = false;
+        _imageError = null;
+        Option.ImageUrl = "";
+        State.Notify();
+    }
+
+    private async Task OnImageFileSelected(InputFileChangeEventArgs e)
+    {
+        _imageError = null;
+        var file = e.File;
+        if (file is null) return;
+
+        if (file.Size > MaxImageBytes)
+        {
+            _imageError = $"Image trop lourde ({file.Size / 1024} Ko, {MaxImageBytes / 1024} Ko maximum).";
+            State.Notify();
+            return;
+        }
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxImageBytes + 1);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var mime = string.IsNullOrWhiteSpace(file.ContentType) ? "image/png" : file.ContentType;
+            Option.ImageUrl = $"data:{mime};base64,{Convert.ToBase64String(ms.ToArray())}";
+            _imageMode = true;
+        }
+        catch (Exception ex)
+        {
+            _imageError = $"Impossible de lire cette image : {ex.Message}";
+        }
+
+        State.Notify();
+    }
+
+    /// <summary>v1.34.19 — équivalent de <see cref="OnImageFileSelected"/> mais via le sélecteur natif
+    /// (<see cref="INativeImagePicker"/>), pour éviter &lt;InputFile&gt; qui provoque l'écran noir/le plantage
+    /// signalé dans la WebView de l'hôte Windows.</summary>
+    private async Task PickNativeImageAsync()
+    {
+        _imageError = null;
+        var dataUrl = await NativeImagePicker.PickImageAsync();
+        if (dataUrl is null) { State.Notify(); return; }
+
+        if (!TryCheckImageSize(dataUrl, MaxImageBytes, out var error))
+        {
+            _imageError = error;
+            State.Notify();
+            return;
+        }
+
+        Option.ImageUrl = dataUrl;
+        _imageMode = true;
+        State.Notify();
+    }
+
+    private static bool TryCheckImageSize(string dataUrl, long maxBytes, out string? error)
+    {
+        var comma = dataUrl.IndexOf(',');
+        var base64 = comma >= 0 ? dataUrl[(comma + 1)..] : dataUrl;
+        var approxBytes = (long)base64.Length * 3 / 4;
+
+        if (approxBytes > maxBytes)
+        {
+            error = $"Image trop lourde (~{approxBytes / 1024} Ko, {maxBytes / 1024} Ko maximum) : réduis-la ou utilise un lien.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private void Move(int delta)
+    {
+        var i = Index;
+        var j = i + delta;
+        if (i < 0 || j < 0 || j >= Button.Options.Count) return;
+
+        (Button.Options[i], Button.Options[j]) = (Button.Options[j], Button.Options[i]);
+        State.Notify();
+    }
+
+    private void Remove()
+    {
+        Button.Options.Remove(Option);
+        State.Notify();
+    }
+
+    // ----- Commande vocale -----
+
+    private string _newTrigger = "";
+
+    private void AddTrigger()
+    {
+        var trigger = _newTrigger.Trim();
+        if (trigger.Length == 0) return;
+        if (!Option.VoiceTriggers.Contains(trigger, StringComparer.OrdinalIgnoreCase))
+            Option.VoiceTriggers.Add(trigger);
+        _newTrigger = "";
+        State.Notify();
+    }
+
+    private void RemoveTrigger(string trigger)
+    {
+        Option.VoiceTriggers.Remove(trigger);
+        State.Notify();
+    }
+
+    private void SetRequiresWakeWord(bool value)
+    {
+        Option.VoiceRequiresWakeWord = value;
+        State.Notify();
+    }
+
+    private bool _listening;
+
+    /// <summary>Écoute une phrase et la propose comme déclencheur — fidèle à ce que la reconnaissance vocale entend
+    /// vraiment, plutôt que d'avoir à la deviner en la tapant.</summary>
+    /// <summary>Écoute une phrase et la propose comme déclencheur — fidèle à ce que la reconnaissance vocale entend
+    /// vraiment, plutôt que d'avoir à la deviner en la tapant.
+    /// Met en pause l'écoute continue le temps de l'enregistrement (le micro ne peut servir qu'à une reconnaissance
+    /// à la fois — sans ça, les deux se coupent l'herbe sous le pied et rien ne s'enregistre), puis la relance
+    /// ensuite si elle était active.</summary>
+    private async Task RecordTrigger()
+    {
+        var wasListening = Config.Current.Voice.Enabled;
+        if (wasListening)
+        {
+            await Platform.SetVoiceListeningAsync(false);
+            await Task.Delay(400); // laisse le temps au micro de vraiment se libérer avant d'en redemander l'accès
+        }
+
+        _listening = true;
+        StateHasChanged();
+
+        string? heard = null;
+        try { heard = await Platform.RecognizeSpeechOnceAsync(); }
+        finally
+        {
+            _listening = false;
+            if (wasListening) await Platform.SetVoiceListeningAsync(true);
+        }
+
+        if (!string.IsNullOrWhiteSpace(heard))
+        {
+            var trigger = heard.Trim();
+            if (!Option.VoiceTriggers.Contains(trigger, StringComparer.OrdinalIgnoreCase))
+                Option.VoiceTriggers.Add(trigger);
+            State.Notify();
+        }
+    }
+
+    // ----- Variables de script ({season}, {episode}...) -----
+
+    private static readonly IReadOnlyList<ChoiceItem> VarKindChoices = new List<ChoiceItem>
+    {
+        new(((int)VariableKind.Number).ToString(), "Nombre", null, "fa-solid fa-hashtag"),
+        new(((int)VariableKind.Text).ToString(), "Texte", null, "fa-solid fa-font")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> VarModeChoices = new List<ChoiceItem>
+    {
+        new(((int)VariableMode.Fixed).ToString(), "Réglée ici", "Envoyée telle quelle à chaque lancement", "fa-solid fa-lock"),
+        new(((int)VariableMode.Prompt).ToString(), "Au lancement", "Un sélecteur s'affiche juste avant de lancer", "fa-solid fa-hand-pointer")
+    };
+
+    private void AddVariable()
+    {
+        Option.Variables.Add(new ButtonVariable { Name = $"variable{Option.Variables.Count + 1}" });
+        State.Notify();
+    }
+
+    private void RemoveVariable(ButtonVariable v)
+    {
+        Option.Variables.Remove(v);
+        State.Notify();
+    }
+
+    private void SetVarKind(ButtonVariable v, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((VariableKind)n)) v.Kind = (VariableKind)n;
+        State.Notify();
+    }
+
+    private void SetVarMode(ButtonVariable v, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((VariableMode)n)) v.Mode = (VariableMode)n;
+        State.Notify();
+    }
+
+    private static int GetVarNumber(ButtonVariable v) => int.TryParse(v.Value, out var n) ? n : v.Min;
+
+    private void SetVarNumber(ButtonVariable v, int n)
+    {
+        v.Value = n.ToString();
+        State.Notify();
+    }
+
+    private void SetAutoIncrement(ButtonVariable v, bool on)
+    {
+        v.AutoIncrement = on;
+        State.Notify();
+    }
+}

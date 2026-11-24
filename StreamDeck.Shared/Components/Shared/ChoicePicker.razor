@@ -1,0 +1,70 @@
+<Modal Open="Open" Title="@Title" Icon="@Icon" Size="medium" OnClose="OnClose">
+    @* Barre de recherche (v1.34.6) : utile dès qu'une liste dépasse une poignée d'entrées (fuseaux horaires,
+       scripts, boîtes mail…) — filtre sur le titre ET le sous-titre (le sous-titre porte souvent le pays/dossier). *@
+    @if (Items.Count > 6)
+    {
+        <div class="choice-search">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" value="@_query" @oninput="e => _query = (string?)e.Value ?? string.Empty" placeholder="Rechercher…" autocomplete="off" spellcheck="false" autofocus />
+        </div>
+    }
+    <div class="choice-list">
+        @if (FilteredItems.Count == 0)
+        {
+            <p class="choice-empty">Aucun résultat pour « @_query ».</p>
+        }
+        @foreach (var item in FilteredItems)
+        {
+            <button type="button" class="@ItemClass(item)" @onclick="() => Pick(item)">
+                @if (!string.IsNullOrEmpty(item.Icon))
+                {
+                    <span class="choice-icon"><i class="@item.Icon"></i></span>
+                }
+                <span class="choice-text">
+                    <span class="choice-title">@item.Title</span>
+                    @if (!string.IsNullOrEmpty(item.Subtitle))
+                    {
+                        <span class="choice-sub">@item.Subtitle</span>
+                    }
+                </span>
+                @if (item.Value == Current)
+                {
+                    <i class="fa-solid fa-check choice-check"></i>
+                }
+            </button>
+        }
+    </div>
+</Modal>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public IReadOnlyList<ChoiceItem> Items { get; set; } = Array.Empty<ChoiceItem>();
+    [Parameter] public string? Current { get; set; }
+    [Parameter] public EventCallback<string> OnPick { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string ItemClass(ChoiceItem item) => item.Value == Current ? "choice-item is-selected" : "choice-item";
+
+    // ----- Recherche (v1.34.6) : sur le titre ET le sous-titre, insensible à la casse. Vidée à chaque réouverture
+    // (sinon une recherche tapée la fois précédente resterait active et masquerait toute la liste au prochain clic). -----
+    private string _query = "";
+    private bool _wasOpen;
+
+    protected override void OnParametersSet()
+    {
+        if (Open && !_wasOpen) _query = "";
+        _wasOpen = Open;
+    }
+
+    private IReadOnlyList<ChoiceItem> FilteredItems =>
+        string.IsNullOrWhiteSpace(_query)
+            ? Items
+            : Items.Where(i =>
+                (i.Title?.Contains(_query, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (i.Subtitle?.Contains(_query, StringComparison.OrdinalIgnoreCase) ?? false)
+              ).ToList();
+
+    private Task Pick(ChoiceItem item) => OnPick.InvokeAsync(item.Value);
+}

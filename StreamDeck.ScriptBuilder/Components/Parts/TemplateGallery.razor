@@ -1,0 +1,71 @@
+<Modal Open="Open" Title="Nouveau script" Icon="fa-solid fa-plus" OnClose="OnClose">
+    <ChildContent>
+        <p class="settings-hint tpl-intro">Choisis un point de départ. Les modèles sont des enchaînements d'actions déjà prêts : il ne reste qu'à choisir tes programmes, adresses et réglages.</p>
+
+        <span class="settings-input tpl-search">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input @bind="_query" @bind:event="oninput" placeholder="Rechercher un modèle" autocomplete="off" spellcheck="false" aria-label="Rechercher un modèle" />
+        </span>
+
+        @foreach (var category in ScriptTemplates.Categories)
+        {
+            var templates = ScriptTemplates.All.Where(t => t.Category == category && Matches(t)).ToList();
+            if (templates.Count == 0) continue;
+
+            <h3 class="tpl-category">@category</h3>
+            <div class="tpl-grid">
+                @foreach (var template in templates)
+                {
+                    var steps = template.Build().Steps;
+                    <button type="button" class="tpl-card" @onclick="() => Pick(template.Id)">
+                        <span class="tpl-head">
+                            <span class="tpl-icon"><i class="@template.Icon"></i></span>
+                            <strong>@template.Title</strong>
+                        </span>
+                        <span class="tpl-desc">@template.Description</span>
+                        <span class="tpl-chain">
+                            @if (steps.Count == 0)
+                            {
+                                <span class="tpl-none">Aucune action</span>
+                            }
+                            @for (var i = 0; i < steps.Count; i++)
+                            {
+                                var info = StepCatalog.Of(steps[i].Kind);
+                                @if (i > 0)
+                                {
+                                    <i class="fa-solid fa-arrow-right tpl-arrow"></i>
+                                }
+                                <span class="tpl-step"><i class="@info.Icon"></i>@info.Title</span>
+                            }
+                        </span>
+                    </button>
+                }
+            </div>
+        }
+
+        @if (!ScriptTemplates.All.Any(Matches))
+        {
+            <p class="fb-empty">Aucun modèle ne correspond à « @_query.Trim() ».</p>
+        }
+    </ChildContent>
+</Modal>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public EventCallback<string> OnPick { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string _query = string.Empty;
+
+    private Task Pick(string id) => OnPick.InvokeAsync(id);
+
+    private bool Matches(ScriptTemplate template)
+    {
+        var words = _query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (words.Length == 0) return true;
+
+        var haystack = $"{template.Title} {template.Description} {template.Category} " +
+                       string.Join(' ', template.Build().Steps.Select(s => StepCatalog.Of(s.Kind).Title));
+        return words.All(w => haystack.Contains(w, StringComparison.CurrentCultureIgnoreCase));
+    }
+}

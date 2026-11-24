@@ -1,0 +1,35 @@
+/* IdleGuard : écran noir avec l'heure après une période d'inactivité (créé par deck.js). */
+
+.idle-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  background: #000;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .8s ease, visibility 0s linear .8s;
+}
+
+.idle-overlay.is-dimmed {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity .8s ease;
+}
+
+.idle-clock {
+  color: rgba(255, 255, 255, .26);
+  font-size: clamp(3rem, 14vw, 8rem);
+  font-weight: 300;
+  letter-spacing: .04em;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .idle-overlay, .idle-overlay.is-dimmed { transition: none; }
+}

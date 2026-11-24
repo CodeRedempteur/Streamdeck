@@ -1,0 +1,422 @@
+@* Onglet « Calendrier » (v1.37, revu en v1.37.2) : demandé explicitement — "routine de la semaine et tache frequente
+   ne doivent pas etre des zone mais plutot une option lorsque qu'on click sur un jour du calendrier avec en option
+   option récurrente... dans le calendrier on dois pouvoir ajouté plus que une tache par jour et coupé par tranche de
+   temps... Exemple le 9 octobre jai de 8h a 11h sport, de 11h a 12h30 repas de midi... inspire toi du style que t as
+   fait pour les routines de semaine... faut permettre facielmeent de choisir la minute heure etc pas + ou -". Une
+   seule bibliothèque visuelle désormais : la grille du mois (comme avant, navigable mois/année sans limite). Les
+   « routines » et « tâches fréquentes » d'avant (deux bibliothèques séparées en haut de page) sont fusionnées en un
+   seul concept, CalendarEntry — un créneau avec une heure de début/fin, créé UNIQUEMENT depuis la modale d'un jour,
+   avec une simple case "récurrent chaque semaine" plutôt que deux pages distinctes. Les heures se choisissent avec
+   un <input type="time"> natif (pas de +/-, demandé explicitement). *@
+@page "/calendar"
+@inject BuilderConfigService Config
+@inject ScriptStore Store
+@inject INativePicker Picker
+@inject ShellService Shell
+
+<div class="lib">
+    <MainHeader ActiveTab="calendar" Subtitle="Clique sur un jour pour y planifier des créneaux, une note, des pièces jointes ou un réveil." />
+
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-calendar-days"></i></span>
+            <div>
+                <h2>Calendrier</h2>
+                <p>Clique sur un jour pour lui ajouter des créneaux horaires (ex. 8h–11h « Sport »), ponctuels ou récurrents chaque semaine, une note, des pièces jointes, ou un réveil.</p>
+            </div>
+        </div>
+
+        <div class="cal-month-head">
+            <div class="cal-month-nav">
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => ShiftYear(-1)" aria-label="Année précédente" title="Année précédente"><i class="fa-solid fa-angles-left"></i></button>
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => ShiftMonth(-1)" aria-label="Mois précédent" title="Mois précédent"><i class="fa-solid fa-angle-left"></i></button>
+            </div>
+            <span class="cal-month-title">@MonthName(_calMonth) @_calYear</span>
+            <div class="cal-month-nav">
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => ShiftMonth(1)" aria-label="Mois suivant" title="Mois suivant"><i class="fa-solid fa-angle-right"></i></button>
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => ShiftYear(1)" aria-label="Année suivante" title="Année suivante"><i class="fa-solid fa-angles-right"></i></button>
+            </div>
+            <button type="button" class="settings-btn settings-btn-sm" @onclick="GoToday"><i class="fa-solid fa-calendar-day"></i><span>Aujourd'hui</span></button>
+        </div>
+
+        <div class="cal-grid">
+            @foreach (var day in Days)
+            {
+                <div class="cal-grid-dow">@(DayLabel(day)[..3])</div>
+            }
+            @foreach (var cell in MonthCells())
+            {
+                var entries = EntriesFor(cell.Date);
+                var hasNote = Config.Current.CalendarDayNotes.Any(n => n.Date == cell.Date && (n.Note.Length > 0 || n.AttachmentPaths.Count > 0 || n.AlarmEnabled));
+                <button type="button" class="cal-cell @(cell.InMonth ? "" : "is-outside") @(cell.Date == Today ? "is-today" : "")" @onclick="() => OpenDayModal(cell.Date)">
+                    <span class="cal-cell-num">@cell.Date.Day</span>
+                    <span class="cal-cell-entries">
+                        @foreach (var entry in entries.Take(3))
+                        {
+                            <span class="cal-cell-entry" style="--cal-chip-color:@entry.Color">@(string.IsNullOrWhiteSpace(entry.Label) ? "(sans nom)" : entry.Label)</span>
+                        }
+                        @if (entries.Count > 3)
+                        {
+                            <span class="cal-cell-more">+@(entries.Count - 3)</span>
+                        }
+                    </span>
+                    @if (hasNote)
+                    {
+                        <i class="fa-solid fa-note-sticky cal-cell-badge" title="Note/pièce jointe/réveil"></i>
+                    }
+                </button>
+            }
+        </div>
+    </section>
+</div>
+
+@if (_modalDate is { } modalDate)
+{
+    var note = Config.Current.CalendarDayNotes.FirstOrDefault(n => n.Date == modalDate);
+    var entries = EntriesFor(modalDate);
+    <Modal Open="true" Title="@modalDate.ToString("dddd d MMMM yyyy")" Icon="fa-solid fa-calendar-day" Size="medium" OnClose="CloseDayModal">
+        <ChildContent>
+            <div class="todolib-field">
+                <span>Emploi du temps de ce jour</span>
+                @if (entries.Count == 0)
+                {
+                    <p class="settings-hint" style="margin:0">Aucun créneau pour l'instant.</p>
+                }
+                else
+                {
+                    @foreach (var entry in entries)
+                    {
+                        var expanded = _expanded.Contains(entry.Id);
+                        <div class="cal-entry @(expanded ? "" : "is-collapsed")" style="--cal-chip-color:@entry.Color" @key="entry.Id">
+                            <button type="button" class="cal-entry-head" @onclick="() => ToggleExpanded(entry.Id)">
+                                <span class="cal-entry-time">@TimeLabel(entry.Start) – @TimeLabel(entry.End)</span>
+                                <span class="cal-entry-label">@(string.IsNullOrWhiteSpace(entry.Label) ? "(sans nom)" : entry.Label)</span>
+                                @if (entry.Recurring)
+                                {
+                                    <i class="fa-solid fa-rotate" title="Récurrent chaque semaine"></i>
+                                }
+                                <i class="@(expanded ? "fa-solid fa-chevron-down" : "fa-solid fa-chevron-right")"></i>
+                            </button>
+
+                            @if (expanded)
+                            {
+                                <div class="cal-entry-body">
+                                    <div class="settings-variable-head" style="flex-wrap:wrap;gap:8px">
+                                        <input type="color" value="@entry.Color" @onchange="e => SetEntryField(entry, x => x.Color = (string?)e.Value ?? x.Color)" title="Couleur" style="width:36px;height:36px;border:none;border-radius:8px;flex:0 0 auto" />
+                                        <span class="settings-input settings-input-plain" style="flex:1;min-width:140px">
+                                            <input value="@entry.Label" @onchange='e => SetEntryField(entry, x => x.Label = (string?)e.Value ?? "")' placeholder="Sport" autocomplete="off" />
+                                        </span>
+                                        <button type="button" class="settings-btn settings-btn-icon @(_descOpen.Contains(entry.Id) ? "is-active" : "")" @onclick="() => ToggleDescription(entry.Id)" aria-label="Description" title="@(string.IsNullOrWhiteSpace(entry.Description) ? "Ajouter une description (affichée via le bouton info du widget)" : "Modifier la description")"><i class="fa-solid fa-circle-info"></i></button>
+                                        <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveEntry(entry)" aria-label="Supprimer ce créneau" title="Supprimer ce créneau"><i class="fa-solid fa-trash"></i></button>
+                                    </div>
+
+                                    @if (_descOpen.Contains(entry.Id))
+                                    {
+                                        <div class="todolib-field">
+                                            <span>Description (facultatif)</span>
+                                            <textarea class="todolib-textarea" style="min-height:44px" placeholder="Détail affiché via le bouton info du widget…" @onchange='e => SetEntryField(entry, x => x.Description = (string?)e.Value ?? "")'>@entry.Description</textarea>
+                                        </div>
+                                    }
+
+                                    <div class="todolib-field-row">
+                                        <div class="todolib-field">
+                                            <span>Début</span>
+                                            <span class="settings-input settings-input-plain">
+                                                <input type="time" value="@entry.Start.ToString(@"hh\:mm")" @onchange='e => SetEntryStart(entry, (string?)e.Value ?? "")' />
+                                            </span>
+                                        </div>
+                                        <div class="todolib-field">
+                                            <span>Fin</span>
+                                            <span class="settings-input settings-input-plain">
+                                                <input type="time" value="@entry.End.ToString(@"hh\:mm")" @onchange='e => SetEntryEnd(entry, (string?)e.Value ?? "")' />
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div class="todolib-field">
+                                        <ToggleSwitch Label="Récurrent chaque semaine" Description="Se répète chaque semaine le même jour, plutôt que juste ce jour précis." Value="entry.Recurring" ValueChanged="@(v => SetEntryRecurring(entry, v))" />
+                                        @if (entry.Recurring)
+                                        {
+                                            <ChoiceField Items="DayChoices" Value="@(((int)entry.Day).ToString())" ValueChanged="@(v => SetEntryDay(entry, v))" PickerIcon="fa-solid fa-calendar-day" />
+                                        }
+                                    </div>
+
+                                    <div class="todolib-field-row">
+                                        <div class="todolib-field">
+                                            <ToggleSwitch Label="Rappel au début" Description="Sonne ou lance un script quand le créneau commence." Value="entry.NotifyAtStart" ValueChanged="@(v => SetEntryField(entry, x => x.NotifyAtStart = v))" />
+                                            @if (entry.NotifyAtStart)
+                                            {
+                                                <ChoiceField Items="SoundKindChoices" Value="@(((int)entry.StartSoundKind).ToString())" ValueChanged="@(v => SetEntryField(entry, x => x.StartSoundKind = (TimerSoundKind)int.Parse(v)))" PickerIcon="fa-solid fa-volume-high" />
+                                                @if (entry.StartSoundKind == TimerSoundKind.Script)
+                                                {
+                                                    <ChoiceField Label="Script" Items="ScriptChoices" Value="@entry.StartSoundScript" ValueChanged="@(v => SetEntryField(entry, x => x.StartSoundScript = v))" PickerIcon="fa-solid fa-terminal" />
+                                                }
+                                            }
+                                        </div>
+                                        <div class="todolib-field">
+                                            <ToggleSwitch Label="Rappel à la fin" Description="Sonne ou lance un script quand le créneau se termine — pratique pour signaler l'enchaînement avec le créneau suivant." Value="entry.NotifyAtEnd" ValueChanged="@(v => SetEntryField(entry, x => x.NotifyAtEnd = v))" />
+                                            @if (entry.NotifyAtEnd)
+                                            {
+                                                <ChoiceField Items="SoundKindChoices" Value="@(((int)entry.EndSoundKind).ToString())" ValueChanged="@(v => SetEntryField(entry, x => x.EndSoundKind = (TimerSoundKind)int.Parse(v)))" PickerIcon="fa-solid fa-volume-high" />
+                                                @if (entry.EndSoundKind == TimerSoundKind.Script)
+                                                {
+                                                    <ChoiceField Label="Script" Items="ScriptChoices" Value="@entry.EndSoundScript" ValueChanged="@(v => SetEntryField(entry, x => x.EndSoundScript = v))" PickerIcon="fa-solid fa-terminal" />
+                                                }
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+                <button type="button" class="settings-btn settings-btn-sm" @onclick="() => AddEntry(modalDate)"><i class="fa-solid fa-plus"></i><span>Ajouter un créneau</span></button>
+            </div>
+
+            @if (note is not null)
+            {
+                <div class="todolib-field">
+                    <span>Note</span>
+                    <textarea class="todolib-textarea" @onchange='e => SetDayField(note, n => n.Note = (string?)e.Value ?? "")'>@note.Note</textarea>
+                </div>
+
+                <div class="todolib-field">
+                    <span>Pièces jointes</span>
+                    @if (note.AttachmentPaths.Count == 0)
+                    {
+                        <p class="settings-hint" style="margin:0">Aucune pièce jointe.</p>
+                    }
+                    else
+                    {
+                        @foreach (var path in note.AttachmentPaths)
+                        {
+                            <div class="settings-variable-head" style="gap:8px">
+                                <button type="button" class="settings-btn settings-btn-sm" @onclick="() => Shell.OpenFile(path)" title="Ouvrir"><i class="fa-solid fa-file"></i><span>@System.IO.Path.GetFileName(path)</span></button>
+                                <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveAttachment(note, path)" aria-label="Retirer" title="Retirer"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+                        }
+                    }
+                    <button type="button" class="settings-btn settings-btn-sm" @onclick="() => AddAttachment(note)"><i class="fa-solid fa-paperclip"></i><span>Ajouter un fichier</span></button>
+                </div>
+
+                <div class="todolib-field">
+                    <ToggleSwitch Label="Réveil ce jour-là" Description="Sonne une fois à l'heure choisie, uniquement ce jour précis." Value="note.AlarmEnabled" ValueChanged="@(v => SetDayField(note, n => { n.AlarmEnabled = v; n.AlarmFired = false; }))" />
+                    @if (note.AlarmEnabled)
+                    {
+                        <span class="settings-input settings-input-plain">
+                            <input type="time" value="@note.AlarmTime.ToString(@"hh\:mm")" @onchange='e => SetDayAlarmTime(note, (string?)e.Value ?? "")' />
+                        </span>
+                    }
+                </div>
+            }
+        </ChildContent>
+        <Footer>
+            @if (note is not null)
+            {
+                <button type="button" class="settings-btn settings-btn-danger" @onclick="() => RemoveDayNote(note)"><i class="fa-solid fa-trash"></i><span>Supprimer la note du jour</span></button>
+            }
+            <button type="button" class="settings-btn settings-btn-primary" @onclick="CloseDayModal">Fermer</button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    private static readonly DayOfWeek[] Days = { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
+
+    private readonly HashSet<string> _expanded = new();
+
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+
+    private int _calYear = Today.Year;
+    private int _calMonth = Today.Month;
+    private DateOnly? _modalDate;
+
+    private static readonly string[] MonthNames =
+    {
+        "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"
+    };
+
+    private static string MonthName(int month) => MonthNames[month - 1];
+
+    private void ShiftMonth(int delta)
+    {
+        var total = (_calYear * 12 + (_calMonth - 1)) + delta;
+        _calYear = total / 12;
+        _calMonth = total % 12 + 1;
+    }
+
+    private void ShiftYear(int delta) => _calYear += delta;
+
+    private void GoToday()
+    {
+        _calYear = Today.Year;
+        _calMonth = Today.Month;
+    }
+
+    private void OpenDayModal(DateOnly date)
+    {
+        // Garantit une entrée de note dès l'ouverture (plutôt qu'à la première modification) pour que les champs
+        // soient éditables tout de suite — une entrée vide (jamais modifiée) ne gêne en rien, elle reste invisible
+        // sur la grille (voir hasNote ci-dessus, qui ignore une note vide sans pièce jointe ni réveil) et est
+        // nettoyée à la fermeture si toujours vide (voir CloseDayModal).
+        if (!Config.Current.CalendarDayNotes.Any(d => d.Date == date))
+            Config.Update(c => c.CalendarDayNotes.Add(new CalendarDayNote { Date = date }));
+        _modalDate = date;
+    }
+
+    private void CloseDayModal()
+    {
+        if (_modalDate is { } date)
+        {
+            var note = Config.Current.CalendarDayNotes.FirstOrDefault(d => d.Date == date);
+            if (note is not null && note.Note.Length == 0 && note.AttachmentPaths.Count == 0 && !note.AlarmEnabled)
+                Config.Update(c => c.CalendarDayNotes.RemoveAll(d => d.Id == note.Id));
+        }
+        _modalDate = null;
+    }
+
+    /// <summary>42 cases (6 semaines, lundi en premier) pour le mois affiché — déborde sur le mois précédent/suivant
+    /// pour garder une grille complète, ces jours restant cliquables (pratique pour planifier à cheval sur deux mois
+    /// sans changer de page).</summary>
+    private IEnumerable<(DateOnly Date, bool InMonth)> MonthCells()
+    {
+        var first = new DateOnly(_calYear, _calMonth, 1);
+        var offset = ((int)first.DayOfWeek + 6) % 7; // lundi = 0
+        var start = first.AddDays(-offset);
+        for (var i = 0; i < 42; i++)
+        {
+            var date = start.AddDays(i);
+            yield return (date, date.Month == _calMonth && date.Year == _calYear);
+        }
+    }
+
+    /// <summary>Tous les créneaux qui s'appliquent à cette date précise, triés par heure de début : les récurrents
+    /// dont le jour de semaine correspond, PLUS les ponctuels dont la date correspond exactement.</summary>
+    private List<CalendarEntry> EntriesFor(DateOnly date) =>
+        Config.Current.CalendarEntries
+            .Where(e => e.Recurring ? e.Day == date.DayOfWeek : e.Date == date)
+            .OrderBy(e => e.Start)
+            .ToList();
+
+    private static string DayLabel(DayOfWeek day) => day switch
+    {
+        DayOfWeek.Monday => "Lundi",
+        DayOfWeek.Tuesday => "Mardi",
+        DayOfWeek.Wednesday => "Mercredi",
+        DayOfWeek.Thursday => "Jeudi",
+        DayOfWeek.Friday => "Vendredi",
+        DayOfWeek.Saturday => "Samedi",
+        _ => "Dimanche"
+    };
+
+    private static string TimeLabel(TimeSpan t) => $"{(int)t.TotalHours:D2}:{t.Minutes:D2}";
+
+    private void ToggleExpanded(string id)
+    {
+        if (!_expanded.Remove(id)) _expanded.Add(id);
+    }
+
+    /// <summary>v1.37.4, demandé explicitement ("la description... détruit tout le CSS car énorme, ajoute des I de
+    /// description") : la description n'occupe plus de place dans l'éditeur du créneau tant qu'on ne clique pas sur
+    /// ce bouton info — avant, le champ (une grande zone de texte) était toujours affiché, même vide.</summary>
+    private readonly HashSet<string> _descOpen = new();
+
+    private void ToggleDescription(string id)
+    {
+        if (!_descOpen.Remove(id)) _descOpen.Add(id);
+    }
+
+    private IReadOnlyList<ChoiceItem> ScriptChoices =>
+        Store.HasServerFolder
+            ? Store.List().Select(s => new ChoiceItem(s.Id, s.Id, s.Folder.Length > 0 ? s.Folder : null, "fa-solid fa-scroll")).ToList()
+            : Array.Empty<ChoiceItem>();
+
+    private static readonly IReadOnlyList<ChoiceItem> SoundKindChoices = new List<ChoiceItem>
+    {
+        new(((int)TimerSoundKind.Alarm).ToString(), "Alarme", "Alarme par défaut, en boucle jusqu'à l'arrêt", "fa-solid fa-bell"),
+        new(((int)TimerSoundKind.Script).ToString(), "Lancer un script", "Ex. un script qui ouvre Spotify", "fa-solid fa-terminal"),
+        new(((int)TimerSoundKind.None).ToString(), "Rien", null, "fa-solid fa-volume-xmark")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> DayChoices = Days
+        .Select(d => new ChoiceItem(((int)d).ToString(), DayLabel(d), null, "fa-solid fa-calendar-day")).ToList();
+
+    // ----- Créneaux (v1.37.2, fusion routines + tâches fréquentes) -----
+
+    private void AddEntry(DateOnly date)
+    {
+        var defaultStart = date == Today ? TimeSpan.FromHours(Math.Min(23, DateTime.Now.Hour + 1)) : new TimeSpan(9, 0, 0);
+        var entry = new CalendarEntry { Date = date, Day = date.DayOfWeek, Start = defaultStart, End = defaultStart.Add(TimeSpan.FromHours(1)) };
+        Config.Update(c => c.CalendarEntries.Add(entry));
+        _expanded.Add(entry.Id);
+    }
+
+    private void RemoveEntry(CalendarEntry entry)
+    {
+        Config.Update(c => c.CalendarEntries.RemoveAll(e => e.Id == entry.Id));
+        _expanded.Remove(entry.Id);
+    }
+
+    private void SetEntryField(CalendarEntry entry, Action<CalendarEntry> apply) =>
+        Config.Update(c =>
+        {
+            var e = c.CalendarEntries.FirstOrDefault(x => x.Id == entry.Id);
+            if (e is not null) apply(e);
+        });
+
+    private void SetEntryRecurring(CalendarEntry entry, bool value) =>
+        SetEntryField(entry, e =>
+        {
+            e.Recurring = value;
+            if (value) e.Day = entry.Date.DayOfWeek; // jour de semaine déduit de la date sur laquelle le créneau a été créé
+        });
+
+    private void SetEntryDay(CalendarEntry entry, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((DayOfWeek)n)) SetEntryField(entry, e => e.Day = (DayOfWeek)n);
+    }
+
+    private static TimeSpan? ParseTime(string value) => TimeSpan.TryParse(value, out var t) ? t : null;
+
+    private void SetEntryStart(CalendarEntry entry, string value)
+    {
+        if (ParseTime(value) is { } t) SetEntryField(entry, e => e.Start = t);
+    }
+
+    private void SetEntryEnd(CalendarEntry entry, string value)
+    {
+        if (ParseTime(value) is { } t) SetEntryField(entry, e => e.End = t);
+    }
+
+    // ----- Jours (note/pièces jointes/réveil) -----
+
+    private void RemoveDayNote(CalendarDayNote note)
+    {
+        Config.Update(c => c.CalendarDayNotes.RemoveAll(d => d.Id == note.Id));
+        CloseDayModal();
+    }
+
+    private void SetDayField(CalendarDayNote note, Action<CalendarDayNote> apply) =>
+        Config.Update(c =>
+        {
+            var d = c.CalendarDayNotes.FirstOrDefault(x => x.Id == note.Id);
+            if (d is not null) apply(d);
+        });
+
+    private void SetDayAlarmTime(CalendarDayNote note, string value)
+    {
+        if (ParseTime(value) is { } t) SetDayField(note, n => { n.AlarmTime = t; n.AlarmFired = false; });
+    }
+
+    private async Task AddAttachment(CalendarDayNote note)
+    {
+        string? path;
+        try { path = await Picker.PickFileAsync(null); }
+        catch (Exception) { return; } // sélecteur indisponible : pas de pièce jointe plutôt qu'une erreur bruyante
+        if (string.IsNullOrWhiteSpace(path)) return;
+        SetDayField(note, n => n.AttachmentPaths.Add(path));
+    }
+
+    private void RemoveAttachment(CalendarDayNote note, string path) =>
+        SetDayField(note, n => n.AttachmentPaths.Remove(path));
+}

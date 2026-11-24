@@ -1,0 +1,75 @@
+@inject ICrashLogProvider CrashLogProvider
+@inject IJSRuntime JS
+
+@if (CrashLogProvider.CanRead && _log is not null)
+{
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-triangle-exclamation"></i></span>
+            <div>
+                <h2>Dernier plantage</h2>
+                <p>L'application a fermé de façon inattendue — copie ce texte pour le signaler.</p>
+            </div>
+        </div>
+
+        <textarea class="settings-textarea diag-crash-textarea" readonly rows="8" aria-label="Détail du dernier plantage" @onfocus="SelectAll">@_log</textarea>
+
+        <div class="settings-backup-actions">
+            <button type="button" class="settings-btn" @onclick="CopyAsync">
+                <i class="fa-solid fa-copy"></i><span>Copier</span>
+            </button>
+            <button type="button" class="settings-btn settings-btn-danger" @onclick="ClearAsync">
+                <i class="fa-solid fa-trash"></i><span>Effacer</span>
+            </button>
+            @if (_copyMessage is not null)
+            {
+                <span class="settings-test-result @(_copyOk ? "is-ok" : "is-err")">
+                    <i class="@(_copyOk ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_copyMessage</span>
+                </span>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private string? _log;
+    private string? _copyMessage;
+    private bool _copyOk;
+
+    protected override void OnInitialized() => _log = CrashLogProvider.CanRead ? CrashLogProvider.ReadLast() : null;
+
+    private async Task CopyAsync()
+    {
+        if (_log is null) return;
+
+        try
+        {
+            _copyOk = await JS.InvokeAsync<bool>("deck.copyText", _log);
+        }
+        catch (Exception)
+        {
+            _copyOk = false;
+        }
+
+        _copyMessage = _copyOk ? "Copié dans le presse-papiers" : "Copie impossible : sélectionne le texte et copie-le à la main";
+    }
+
+    private void ClearAsync()
+    {
+        CrashLogProvider.Clear();
+        _log = null;
+        _copyMessage = null;
+    }
+
+    private async Task SelectAll(FocusEventArgs _)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("deck.selectText", "textarea.diag-crash-textarea");
+        }
+        catch (Exception)
+        {
+            // Sélection automatique non disponible : sans gravité.
+        }
+    }
+}

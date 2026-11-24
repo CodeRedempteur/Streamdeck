@@ -1,0 +1,469 @@
+@* v1.38 — onglet « Roues » : toutes les roues de WheelConvert dans l'ordre de la molette (les siennes, puis celles du
+   Stream Deck), une grande roue dessinée et cliquable, et l'éditeur des roues Stream Deck. Publication automatique
+   vers WheelConvert à chaque modification (voir WheelBridgeService). *@
+@implements IDisposable
+@inject BuilderConfigService Config
+@inject ScriptStore Store
+@inject WheelBridgeService Bridge
+
+<style>
+    .wcp-sector.is-click { cursor: pointer; transition: fill .12s ease; }
+    .wcp-sector.is-click:hover { fill: var(--accent); }
+    .wcp-cell, .wcp-hub { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+                          gap: 2px; color: #fff; text-align: center; line-height: 1.1; overflow: hidden; }
+    .wcp-label { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wcp-sub { font-size: 8px; opacity: .7; }
+    .wcp-hub-title { font-size: 10px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wcp-glyph { font-family: "Segoe UI Emoji", "Segoe UI Symbol", sans-serif; line-height: 1; }
+    .wheel-strip { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0 4px; }
+    .wheel-card { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 132px; padding: 10px 8px;
+                  border-radius: 14px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02);
+                  color: inherit; cursor: pointer; position: relative; }
+    .wheel-card:hover { border-color: rgba(255,255,255,.2); }
+    .wheel-card.is-on { border-color: #3b82f6; background: rgba(59,130,246,.12); }
+    .wheel-card-num { position: absolute; top: 6px; left: 8px; font-size: 10px; opacity: .55; }
+    .wheel-card-name { font-size: 12px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wheel-card-badge { font-size: 10px; opacity: .6; }
+    .wheel-card-add { justify-content: center; border-style: dashed; min-height: 150px; font-size: 13px; opacity: .8; }
+    .wheel-layout { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; margin-top: 18px; }
+    .wheel-layout-preview { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    .wheel-layout-editor { flex: 1 1 420px; min-width: 320px; }
+    .wheel-row { border-radius: 12px; transition: box-shadow .12s ease; }
+    .wheel-row.is-focus { box-shadow: 0 0 0 2px var(--accent); }
+    .wheel-local-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.03); }
+    .wheel-local-chip { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 16px; flex: 0 0 auto; }
+</style>
+
+<section class="settings-card">
+    <div class="settings-card-head">
+        <span class="settings-chip"><i class="fa-solid fa-circle-notch"></i></span>
+        <div>
+            <h2>Roues WheelConvert</h2>
+            <p><strong>Shift + clic droit maintenu</strong> n'importe où : la roue s'ouvre, la <strong>molette</strong> passe d'une roue à l'autre dans l'ordre ci-dessous, relâcher sur l'action.</p>
+        </div>
+    </div>
+
+    @if (Bridge.LastError is { } error)
+    {
+        <p class="settings-test-result is-err"><i class="fa-solid fa-circle-xmark"></i><span>Publication impossible : @error</span></p>
+    }
+    else if (!WheelBridgeService.WheelConvertInstalled)
+    {
+        <p class="settings-hint"><i class="fa-solid fa-circle-info"></i> WheelConvert n'a pas encore été lancé sur ce PC — tes roues Stream Deck y apparaîtront dès son premier lancement.</p>
+    }
+    else if (!_showsStreamDeck)
+    {
+        <p class="settings-test-result is-err"><i class="fa-solid fa-eye-slash"></i><span>WheelConvert masque les roues Stream Deck (designer WheelConvert → Général → « Afficher les roues envoyées par Stream Deck »).</span></p>
+    }
+    else
+    {
+        <p class="settings-test-result is-ok"><i class="fa-solid fa-circle-check"></i><span>Synchronisé avec WheelConvert — @_local.Count roue(s) WheelConvert + @Wheels.Count roue(s) Stream Deck.</span></p>
+    }
+
+    @if (!Store.HasServerFolder)
+    {
+        <p class="settings-hint">Choisis d'abord le dossier du serveur (onglet Réglages) : les roues Stream Deck lancent les scripts de ta bibliothèque.</p>
+    }
+
+    @* ---------- Toutes les roues, dans l'ordre de la molette ---------- *@
+    <div class="wheel-strip">
+        @{ int number = 0; }
+        @foreach (var w in _local)
+        {
+            number++;
+            string key = "wc:" + w.Id;
+            <button type="button" class="@CardClass(key)" @onclick="() => Select(key)" title="Roue de WheelConvert — modifiable dans WheelConvert">
+                <span class="wheel-card-num">@number</span>
+                <WheelPreview Items="PreviewOf(w)" Size="96" ShowLabels="false" HubGlyph="@w.Glyph" Title="@w.Name" />
+                <span class="wheel-card-name">@w.Glyph @w.Name</span>
+                <span class="wheel-card-badge"><i class="fa-solid fa-desktop"></i> WheelConvert · @w.Items.Count</span>
+            </button>
+        }
+        @foreach (var w in Wheels)
+        {
+            number++;
+            string key = "sd:" + w.Id;
+            <button type="button" class="@CardClass(key)" @onclick="() => Select(key)" style="@(_showsStreamDeck ? "" : "opacity:.5")">
+                <span class="wheel-card-num">@number</span>
+                <WheelPreview Items="PreviewOf(w)" Size="96" ShowLabels="false" HubIcon="@WheelIcon(w)" HubColor="@w.Color" Title="@w.Name" />
+                <span class="wheel-card-name"><i class="@WheelIcon(w)" style="color:@w.Color"></i> @w.Name</span>
+                <span class="wheel-card-badge"><i class="fa-solid fa-table-cells"></i> Stream Deck · @w.Items.Count</span>
+            </button>
+        }
+        <button type="button" class="wheel-card wheel-card-add" @onclick="AddWheel" title="Nouvelle roue Stream Deck">
+            <i class="fa-solid fa-plus" style="font-size:22px"></i>
+            <span>Nouvelle roue</span>
+        </button>
+    </div>
+
+    @if (SelectedLocal is { } local)
+    {
+        @* ---------- Roue de WheelConvert : aperçu + lecture seule ---------- *@
+        <div class="wheel-layout">
+            <div class="wheel-layout-preview">
+                <WheelPreview Items="PreviewOf(local)" Size="340" HubGlyph="@local.Glyph" Title="@local.Name" />
+            </div>
+            <div class="wheel-layout-editor">
+                <h3 style="margin:0 0 4px">@local.Glyph @local.Name</h3>
+                <p class="settings-hint" style="margin:0 0 12px">Roue créée dans WheelConvert (applications, dossiers, raccourcis…) : elle se modifie dans son designer. Ici, en lecture seule.</p>
+                <div style="display:grid;gap:6px">
+                    @foreach (var item in local.Items)
+                    {
+                        <div class="wheel-local-item">
+                            <span class="wheel-local-chip wcp-glyph" style="background:@item.Color">@item.Glyph</span>
+                            <span style="flex:1">@item.Name</span>
+                            @if (item.IsLink)
+                            {
+                                <span class="settings-tab-count">roue ›</span>
+                            }
+                        </div>
+                    }
+                    @if (local.Items.Count == 0)
+                    {
+                        <p class="settings-hint">Roue vide.</p>
+                    }
+                </div>
+                <div class="settings-variable-head" style="margin-top:14px">
+                    <button type="button" class="settings-btn" disabled="@(WheelBridgeService.WheelConvertExe is null)" @onclick="OpenDesigner"
+                            title="@(WheelBridgeService.WheelConvertExe is null ? "Lance WheelConvert une fois pour activer ce bouton" : "Ouvre le designer de WheelConvert")">
+                        <i class="fa-solid fa-pen-to-square"></i><span>Modifier dans WheelConvert</span>
+                    </button>
+                </div>
+                @if (_notice is not null)
+                {
+                    <p class="settings-hint">@_notice</p>
+                }
+            </div>
+        </div>
+    }
+    else if (SelectedSd is { } wheel)
+    {
+        int wheelIndex = Wheels.FindIndex(w => w.Id == wheel.Id);
+        var preview = PreviewOf(wheel);
+
+        @* ---------- Roue Stream Deck : aperçu cliquable + éditeur ---------- *@
+        <div class="wheel-layout">
+            <div class="wheel-layout-preview">
+                <WheelPreview Items="preview" Size="340" HubIcon="@WheelIcon(wheel)" HubColor="@wheel.Color" Title="@wheel.Name"
+                              Highlight="_focus" OnSectorClick="i => _focus = i" />
+                <span class="settings-hint" style="margin:0">Clique un secteur pour le retrouver dans la liste.</span>
+            </div>
+
+            <div class="wheel-layout-editor">
+                <div class="settings-variable-head">
+                    <button type="button" class="settings-btn settings-btn-icon" style="color:@wheel.Color" @onclick="() => _appearance = (wheel.Id, null)" title="Icône et couleur de la roue" aria-label="Icône et couleur de la roue">
+                        <i class="@WheelIcon(wheel)"></i>
+                    </button>
+                    <span class="settings-input settings-input-plain" style="flex:1">
+                        <input value="@wheel.Name" @onchange='e => Edit(wheel.Id, w => w.Name = string.IsNullOrWhiteSpace((string?)e.Value) ? "Roue" : ((string)e.Value!).Trim())' placeholder="Nom de la roue" autocomplete="off" />
+                    </span>
+                    <button type="button" class="settings-btn settings-btn-icon" disabled="@(wheelIndex <= 0)" @onclick="() => MoveWheel(wheel.Id, -1)" title="Déplacer avant (molette)"><i class="fa-solid fa-arrow-left"></i></button>
+                    <button type="button" class="settings-btn settings-btn-icon" disabled="@(wheelIndex >= Wheels.Count - 1)" @onclick="() => MoveWheel(wheel.Id, 1)" title="Déplacer après (molette)"><i class="fa-solid fa-arrow-right"></i></button>
+                    <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveWheel(wheel.Id)" title="Supprimer cette roue" aria-label="Supprimer cette roue"><i class="fa-solid fa-trash"></i></button>
+                </div>
+
+                @if (wheel.Items.Count == 0)
+                {
+                    <p class="settings-hint">Roue vide — ajoute des scripts ci-dessous (16 secteurs au maximum pour rester lisible).</p>
+                }
+
+                <div style="display:grid;gap:8px;margin:10px 0">
+                    @for (int i = 0; i < wheel.Items.Count; i++)
+                    {
+                        var item = wheel.Items[i];
+                        int index = i;
+                        var look = LookOf(wheel, item);
+
+                        <div class="settings-variable wheel-row @(index == _focus ? "is-focus" : "")" style="margin:0;--accent:@look.Color" @onclick="() => _focus = index">
+                            <div class="settings-variable-head">
+                                <button type="button" class="settings-btn settings-btn-icon" style="background:@look.Color;color:#fff;border-color:transparent" @onclick="() => _appearance = (wheel.Id, item.Id)" title="Icône et couleur" aria-label="Icône et couleur">
+                                    <i class="@look.Icon"></i>
+                                </button>
+
+                                @if (item.Kind == "wheel")
+                                {
+                                    <ChoiceField Items="WheelChoices(wheel.Id)" Value="@(item.TargetWheelId ?? "")" ValueChanged="@(v => EditItem(wheel.Id, item.Id, x => x.TargetWheelId = v))" PickerIcon="fa-solid fa-circle-notch" />
+                                }
+                                else
+                                {
+                                    <ChoiceField Items="ScriptChoices" Value="@item.ScriptName" ValueChanged="@(v => EditItem(wheel.Id, item.Id, x => x.ScriptName = v))" PickerIcon="fa-solid fa-scroll" />
+                                }
+
+                                <span class="settings-input settings-input-plain" style="max-width:170px">
+                                    <input value="@item.Label" @onchange='e => EditItem(wheel.Id, item.Id, x => x.Label = ((string?)e.Value ?? "").Trim())' placeholder="@look.Name" title="Nom affiché dans la roue (vide = nom du script)" autocomplete="off" />
+                                </span>
+
+                                <button type="button" class="settings-btn settings-btn-icon" disabled="@(index == 0)" @onclick="() => MoveItem(wheel.Id, index, -1)" title="Monter (sens inverse des aiguilles)"><i class="fa-solid fa-arrow-up"></i></button>
+                                <button type="button" class="settings-btn settings-btn-icon" disabled="@(index == wheel.Items.Count - 1)" @onclick="() => MoveItem(wheel.Id, index, 1)" title="Descendre (sens des aiguilles)"><i class="fa-solid fa-arrow-down"></i></button>
+                                <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveItem(wheel.Id, item.Id)" title="Retirer" aria-label="Retirer"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                            @if (item.Kind == "script" && !string.IsNullOrWhiteSpace(item.ScriptName) && !ScriptExists(item.ScriptName))
+                            {
+                                <p class="settings-test-result is-err" style="margin:6px 0 0"><i class="fa-solid fa-triangle-exclamation"></i><span>Script « @item.ScriptName » introuvable ou désactivé : ce secteur n'est pas envoyé.</span></p>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="settings-variable-head" style="flex-wrap:wrap">
+                    <button type="button" class="settings-btn" disabled="@(wheel.Items.Count >= MaxSectors)" @onclick='() => AddItem(wheel.Id, "script")'><i class="fa-solid fa-plus"></i><span>Ajouter un script</span></button>
+                    <button type="button" class="settings-btn" disabled="@(wheel.Items.Count >= MaxSectors || Wheels.Count < 2)" @onclick='() => AddItem(wheel.Id, "wheel")' title="Un secteur qui ouvre une autre roue Stream Deck (survol ou clic)"><i class="fa-solid fa-diagram-next"></i><span>Lien vers une roue</span></button>
+                    <button type="button" class="settings-btn" disabled="@(wheel.Items.Count >= MaxSectors || Config.Current.WidgetPins.Count == 0)" @onclick="() => ImportPins(wheel.Id)" title="Ajoute toutes les touches « script » du widget qui ne sont pas encore dans cette roue"><i class="fa-solid fa-thumbtack"></i><span>Importer les touches du widget</span></button>
+                </div>
+                <div class="settings-hint-row"><InfoHint>Le 1er secteur est en haut, puis dans le sens des aiguilles d'une montre. Dans l'onglet Widget, chaque touche a aussi ses puces « Roues » pour l'ajouter ou la retirer en un clic. Icône et couleur vides = celles du script dans la bibliothèque.</InfoHint></div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <p class="settings-hint" style="margin-top:14px">Aucune roue pour l'instant — clique « Nouvelle roue » pour en créer une avec tes scripts.</p>
+    }
+</section>
+
+<AppearancePopup Open="_appearance is not null" Title="@AppearanceTitle" Icon="@AppearanceIcon" Color="@AppearanceColor"
+                 OnApply="ApplyAppearance" OnClose="() => _appearance = null" />
+
+@code {
+    private const int MaxSectors = 16;
+
+    private static readonly string[] Palette = { "#3E63DD", "#2D7DFF", "#8E4EC6", "#E54D9E", "#E5484D", "#F5A524", "#12A594", "#5B5B66" };
+
+    private string? _selectedKey;   // "sd:{id}" (roue Stream Deck, éditable) ou "wc:{id}" (roue WheelConvert, lecture seule)
+    private int _focus = -1;        // secteur surligné (roue Stream Deck)
+    private (string WheelId, string? ItemId)? _appearance;
+    private IReadOnlyList<WheelBridgeService.LocalWheel> _local = Array.Empty<WheelBridgeService.LocalWheel>();
+    private bool _showsStreamDeck = true;
+    private string? _notice;
+
+    private List<WheelConvertWheel> Wheels => Config.Current.WheelConvertWheels;
+
+    private WheelConvertWheel? SelectedSd
+    {
+        get
+        {
+            if (_selectedKey is { } k && k.StartsWith("sd:")) return Wheels.FirstOrDefault(w => w.Id == k[3..]) ?? Wheels.FirstOrDefault();
+            if (_selectedKey is null || SelectedLocalRaw is null) return Wheels.FirstOrDefault();
+            return null;
+        }
+    }
+
+    private WheelBridgeService.LocalWheel? SelectedLocalRaw =>
+        _selectedKey is { } k && k.StartsWith("wc:") ? _local.FirstOrDefault(w => w.Id == k[3..]) : null;
+
+    /// Roue WheelConvert sélectionnée — ou la première s'il n'y a aucune roue Stream Deck.
+    private WheelBridgeService.LocalWheel? SelectedLocal =>
+        SelectedLocalRaw ?? (_selectedKey is null && Wheels.Count == 0 ? _local.FirstOrDefault() : null);
+
+    private string CurrentKey =>
+        SelectedLocal is { } l ? "wc:" + l.Id : SelectedSd is { } s ? "sd:" + s.Id : "";
+
+    private string CardClass(string key) => key == CurrentKey ? "wheel-card is-on" : "wheel-card";
+
+    private void Select(string key)
+    {
+        _selectedKey = key;
+        _focus = -1;
+        _notice = null;
+    }
+
+    protected override void OnInitialized()
+    {
+        Config.Changed += OnChanged;
+        Bridge.Published += OnChanged;
+        Bridge.WheelConvertChanged += OnWheelConvertChanged;
+        ReloadLocal();
+    }
+
+    private void ReloadLocal()
+    {
+        _local = Bridge.ReadWheelConvertWheels();
+        _showsStreamDeck = Bridge.WheelConvertShowsStreamDeck();
+    }
+
+    private void OnWheelConvertChanged() => InvokeAsync(() =>
+    {
+        ReloadLocal();
+        StateHasChanged();
+    });
+
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        _scripts = null; // la bibliothèque a pu changer
+        StateHasChanged();
+    });
+
+    // Bibliothèque lue une seule fois par rendu (List() lit les fichiers du dossier Script)
+    private Dictionary<string, ScriptInfo>? _scripts;
+    private Dictionary<string, ScriptInfo> Scripts => _scripts ??= Store.HasServerFolder
+        ? Store.List().GroupBy(s => s.Id, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
+        : new Dictionary<string, ScriptInfo>(StringComparer.OrdinalIgnoreCase);
+
+    public void Dispose()
+    {
+        Config.Changed -= OnChanged;
+        Bridge.Published -= OnChanged;
+        Bridge.WheelConvertChanged -= OnWheelConvertChanged;
+    }
+
+    private void OpenDesigner()
+    {
+        _notice = Bridge.OpenWheelConvertDesigner()
+            ? "Designer WheelConvert ouvert — les changements apparaissent ici dès l'enregistrement."
+            : "Impossible de lancer WheelConvert (relance-le une fois à la main).";
+    }
+
+    // ----- Aperçus -----
+
+    private static string WheelIcon(WheelConvertWheel w) => string.IsNullOrWhiteSpace(w.Icon) ? "fa-solid fa-circle-notch" : w.Icon;
+
+    private IReadOnlyList<WheelPreview.Item> PreviewOf(WheelConvertWheel w) =>
+        w.Items.Take(MaxSectors).Select(i =>
+        {
+            var look = LookOf(w, i);
+            return new WheelPreview.Item(look.Name, look.Icon, null, look.Color, i.Kind == "wheel");
+        }).ToList();
+
+    private static IReadOnlyList<WheelPreview.Item> PreviewOf(WheelBridgeService.LocalWheel w) =>
+        w.Items.Take(MaxSectors).Select(i => new WheelPreview.Item(i.Name, null, i.Glyph, i.Color, i.IsLink)).ToList();
+
+    private IReadOnlyList<ChoiceItem> ScriptChoices =>
+        Scripts.Values.Select(s => new ChoiceItem(s.Id, s.Id, s.Folder.Length > 0 ? s.Folder : null, "fa-solid fa-scroll")).ToList();
+
+    private IReadOnlyList<ChoiceItem> WheelChoices(string exceptId) =>
+        Wheels.Where(w => w.Id != exceptId)
+              .Select(w => new ChoiceItem(w.Id, w.Name, $"{w.Items.Count} secteur(s)", WheelIcon(w)))
+              .ToList();
+
+    private bool ScriptExists(string name) => Scripts.TryGetValue(name, out var s) && s.Enabled;
+
+    /// <summary>Nom/icône/couleur effectifs d'un secteur (ses propres réglages, sinon ceux du script ou de la roue visée).</summary>
+    private (string Name, string Icon, string Color) LookOf(WheelConvertWheel wheel, WheelConvertItem item)
+    {
+        if (item.Kind == "wheel")
+        {
+            var target = Wheels.FirstOrDefault(w => w.Id == item.TargetWheelId);
+            return (First(item.Label, target?.Name, "Roue"),
+                    First(item.Icon, target?.Icon, "fa-solid fa-circle-notch"),
+                    First(item.Color, target?.Color, "#3E63DD"));
+        }
+
+        Scripts.TryGetValue(item.ScriptName ?? "", out var info);
+        return (First(item.Label, item.ScriptName, "Script"),
+                First(item.Icon, info?.Icon, "fa-solid fa-scroll"),
+                First(item.Color, info?.Color, wheel.Color, "#3E63DD"));
+    }
+
+    private static string First(params string?[] values) => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) ?? "";
+
+    // ----- Roues -----
+
+    private void AddWheel()
+    {
+        var wheel = new WheelConvertWheel
+        {
+            Name = Wheels.Count == 0 ? "Stream Deck" : $"Roue {Wheels.Count + 1}",
+            Color = Palette[Wheels.Count % Palette.Length]
+        };
+        Config.Update(c => c.WheelConvertWheels.Add(wheel));
+        Select("sd:" + wheel.Id);
+    }
+
+    private void Edit(string wheelId, Action<WheelConvertWheel> change) =>
+        Config.Update(c => { var w = c.WheelConvertWheels.FirstOrDefault(x => x.Id == wheelId); if (w is not null) change(w); });
+
+    private void MoveWheel(string wheelId, int delta) => Config.Update(c =>
+    {
+        int i = c.WheelConvertWheels.FindIndex(w => w.Id == wheelId), j = i + delta;
+        if (i < 0 || j < 0 || j >= c.WheelConvertWheels.Count) return;
+        (c.WheelConvertWheels[i], c.WheelConvertWheels[j]) = (c.WheelConvertWheels[j], c.WheelConvertWheels[i]);
+    });
+
+    private void RemoveWheel(string wheelId)
+    {
+        Config.Update(c =>
+        {
+            c.WheelConvertWheels.RemoveAll(w => w.Id == wheelId);
+            // Les liens vers cette roue n'ont plus de cible
+            foreach (var w in c.WheelConvertWheels) w.Items.RemoveAll(i => i.Kind == "wheel" && i.TargetWheelId == wheelId);
+        });
+        _selectedKey = null;
+        _focus = -1;
+    }
+
+    // ----- Secteurs -----
+
+    private void AddItem(string wheelId, string kind) => Edit(wheelId, w =>
+    {
+        if (w.Items.Count >= MaxSectors) return;
+        w.Items.Add(new WheelConvertItem
+        {
+            Kind = kind,
+            TargetWheelId = kind == "wheel" ? Wheels.FirstOrDefault(x => x.Id != wheelId)?.Id : null
+        });
+    });
+
+    private void EditItem(string wheelId, string itemId, Action<WheelConvertItem> change) => Edit(wheelId, w =>
+    {
+        var item = w.Items.FirstOrDefault(i => i.Id == itemId);
+        if (item is not null) change(item);
+    });
+
+    private void MoveItem(string wheelId, int index, int delta)
+    {
+        Edit(wheelId, w =>
+        {
+            int j = index + delta;
+            if (index < 0 || j < 0 || j >= w.Items.Count) return;
+            (w.Items[index], w.Items[j]) = (w.Items[j], w.Items[index]);
+        });
+        if (_focus == index) _focus = index + delta; // le secteur suivi reste surligné
+    }
+
+    private void RemoveItem(string wheelId, string itemId) => Edit(wheelId, w => w.Items.RemoveAll(i => i.Id == itemId));
+
+    private void ImportPins(string wheelId) => Config.Update(c =>
+    {
+        var w = c.WheelConvertWheels.FirstOrDefault(x => x.Id == wheelId);
+        if (w is null) return;
+        foreach (var pin in c.WidgetPins.Where(p => p.Kind == "script" && !p.Hidden && !string.IsNullOrWhiteSpace(p.ScriptName)))
+        {
+            if (w.Items.Count >= MaxSectors) break;
+            if (w.Items.Any(i => i.Kind == "script" && i.ScriptName.Equals(pin.ScriptName, StringComparison.OrdinalIgnoreCase))) continue;
+            w.Items.Add(new WheelConvertItem { Kind = "script", ScriptName = pin.ScriptName, Icon = pin.Icon, Color = pin.Color });
+        }
+    });
+
+    // ----- Apparence (roue ou secteur) -----
+
+    private WheelConvertItem? AppearanceItem =>
+        _appearance is { ItemId: { } itemId } a ? Wheels.FirstOrDefault(w => w.Id == a.WheelId)?.Items.FirstOrDefault(i => i.Id == itemId) : null;
+
+    private WheelConvertWheel? AppearanceItemWheel =>
+        _appearance is { } a ? Wheels.FirstOrDefault(w => w.Id == a.WheelId) : null;
+
+    private WheelConvertWheel? AppearanceWheel =>
+        _appearance is { } a ? Wheels.FirstOrDefault(w => w.Id == a.WheelId) : null;
+
+    private string AppearanceTitle =>
+        AppearanceItem is { } item && AppearanceItemWheel is { } iw ? LookOf(iw, item).Name : AppearanceWheel?.Name ?? "";
+
+    private string AppearanceIcon => AppearanceItem is { } item ? item.Icon : AppearanceWheel?.Icon ?? "";
+    private string AppearanceColor => AppearanceItem is { } item ? item.Color : AppearanceWheel?.Color ?? "";
+
+    private void ApplyAppearance((string Icon, string Color) v)
+    {
+        if (_appearance is not { } target) return;
+        if (target.ItemId is { } itemId)
+        {
+            EditItem(target.WheelId, itemId, i => { i.Icon = v.Icon ?? ""; i.Color = v.Color ?? ""; });
+        }
+        else
+        {
+            Edit(target.WheelId, w =>
+            {
+                w.Icon = string.IsNullOrWhiteSpace(v.Icon) ? "fa-solid fa-circle-notch" : v.Icon;
+                w.Color = string.IsNullOrWhiteSpace(v.Color) ? "#3E63DD" : v.Color;
+            });
+        }
+    }
+}

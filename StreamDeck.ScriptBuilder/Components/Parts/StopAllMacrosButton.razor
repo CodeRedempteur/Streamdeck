@@ -1,0 +1,35 @@
+@inject MacroControlService MacroControl
+
+<button type="button" class="@(IconOnly ? "settings-btn settings-btn-icon" : "settings-btn")" @onclick="Stop" aria-label="Arrêter les macros" title="Arrête tout de suite toutes les macros en cours de relecture, quel que soit le script">
+    <i class="fa-solid fa-hand"></i>@if (!IconOnly) { <span>Arrêter les macros</span> }
+</button>
+
+@if (_notice is not null)
+{
+    <span class="@(_ok ? "settings-test-result is-ok" : "settings-test-result is-err") lib-macro-stop-notice">
+        <i class="@(_ok ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_notice</span>
+    </span>
+}
+
+@code {
+    /// <summary>Icône seule, sans le texte "Arrêter les macros" (en-tête commun des trois pages, v1.34.3) — la notification de résultat reste affichée normalement.</summary>
+    [Parameter] public bool IconOnly { get; set; }
+
+    private string? _notice;
+    private bool _ok;
+
+    private void Stop()
+    {
+        try
+        {
+            MacroControl.StopAllMacros();
+            _notice = "Signal d'arrêt envoyé : toute macro en cours devrait s'arrêter dans l'instant.";
+            _ok = true;
+        }
+        catch (Exception ex)
+        {
+            _notice = ex.Message;
+            _ok = false;
+        }
+    }
+}

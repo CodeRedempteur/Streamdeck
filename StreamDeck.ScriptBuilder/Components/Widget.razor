@@ -1,0 +1,2443 @@
+@* Racine autonome du widget de bureau : PAS sous le Router/App (fenêtre séparée, plus petite, sans la bibliothèque
+   ni l'éditeur). Fenêtre sans bordure (voir WindowsWidgetHost) : la zone "widget-dragbar" ci-dessous remplace la
+   barre de titre Windows — le glissement lui-même reste déclenché depuis le JS au mousedown (widgetDrag.js), qui
+   appelle OnWidgetDragStart ci-dessous (voir sa remarque : une tentative de mécanisme natif direct a cassé tout
+   glissement sur un vrai Windows et a été retirée). Affiche l'heure/la date, permet d'éteindre/rallumer/redémarrer
+   le serveur, de lancer des scripts épinglés (touches, même style que l'application Stream Deck), de consulter le
+   courrier du jour (une ou plusieurs pages, une par boîte si on veut), d'ouvrir le constructeur, et de régler
+   « toujours au premier plan ». Depuis v1.32.0, une page compose librement son propre contenu (horloge, contrôles
+   serveur avec les boutons de son choix, courrier d'une boîte précise ou de toutes, touches épinglées — plusieurs à
+   la fois si besoin, avec leurs propres colonnes/lignes depuis v1.33.0), organisées en espaces de travail (voir
+   Réglages), commutables directement depuis le widget. Depuis v1.33.0, l'en-tête n'affiche plus jamais l'horloge ni
+   les contrôles serveur "en permanence" — ce n'était plus un réglage général mais uniquement le fait d'une page qui
+   les ajoute (une configuration antérieure est migrée vers une page dédiée, voir BuilderConfigService.MigrateLegacyAlwaysVisible),
+   pour que "désactiver" ces éléments les fasse vraiment disparaître, sans exception possible. Les services injectés
+   (singletons) sont les mêmes que ceux de la fenêtre principale : l'état reste cohérent entre les deux fenêtres,
+   pas besoin de les synchroniser à la main. *@
+@implements IDisposable
+@inject ServerRestarter Restarter
+@inject MacroControlService MacroControl
+@inject ScriptStore Store
+@inject ScriptTester Tester
+@inject BuilderConfigService Config
+@inject IWidgetHost WidgetHost
+@inject MailFetchService Mail
+@inject WeatherService Weather
+@inject IJSRuntime JS
+@inject INativePicker Picker
+@inject IPcVoiceListener VoiceListener
+@inject WidgetTimerService WidgetTimer
+@inject CalendarService Calendar
+@inject NavigationManager Nav
+
+@if (Config.Current.WidgetFont == "custom" && CustomFontDataUri.Length > 0)
+{
+    @* Police importée par l'utilisateur (voir FontResolver) : le fichier n'est pas copié dans les réglages (juste
+       son chemin), mais converti ici en @font-face encodée — un lien file:// direct ne se charge pas de façon fiable
+       dans le WebView2 qui affiche le widget (même restriction que pour les images de touches épinglées). *@
+    <style>
+        @@font-face { font-family: 'sdbWidgetCustomFont'; src: url('@CustomFontDataUri'); }
+    </style>
+}
+
+<div class="widget variant-@Config.Current.WidgetVariant font-@Config.Current.WidgetFont @(Config.Current.WidgetRoundedCorners ? "is-rounded" : "")" style="@(CustomColorStyle + CustomFontStyle)"
+     @onmouseenter="OnWidgetMouseEnter" @onmouseleave="OnWidgetMouseLeave">
+    @* Autocomplétion (v1.34.5) du champ "À" de la composition — une seule liste, partagée, remplie au fil des relèves
+       de courrier (voir RegisterKnownContacts) avec les adresses déjà vues. Liste native du navigateur plutôt qu'un
+       composant de suggestions fait main : simple et cohérente avec le reste du système. *@
+    <datalist id="widget-mail-contacts">
+        @foreach (var contact in _knownContacts)
+        {
+            <option value="@contact.Key">@contact.Value</option>
+        }
+    </datalist>
+    @* Poignée = TOUTE cette barre (sauf les boutons eux-mêmes) : mousedown -> widgetDrag.js -> OnWidgetDragStart. *@
+    <div class="widget-header" id="widget-dragbar">
+        <div class="widget-header-spacer"></div>
+        <div class="widget-header-actions">
+            @* v1.34.15, demandé explicitement ("un bouton rapide sur le widget tout en haut pour stop/allumer le
+               serveur") : auparavant seulement disponible via un bloc "server" posé sur une page — ce qui le rendait
+               invisible si aucune page n'en avait un. Ce bouton-ci est toujours là, dans la barre du haut, peu
+               importe la composition des pages. Réutilise exactement le même ToggleServer()/_status que
+               RenderServerControls ci-dessous, donc toujours synchronisé avec lui si un bloc "server" est aussi
+               affiché sur une page. *@
+            <button type="button" class="widget-icon-btn widget-server-quick-btn @(_status?.Running == true ? "is-on" : "is-off")"
+                    @onclick="ToggleServer" disabled="@(_busy || !Store.HasServerFolder || _status is null)"
+                    title="@(_status?.Running == true ? "Éteindre le serveur" : "Rallumer le serveur")">
+                <i class="fa-solid @(_status?.Running == true ? "fa-power-off" : "fa-play")"></i>
+            </button>
+            @* Zone de notifications (v1.34.1) : envois programmés en échec (pas de serveur/connexion joignable à
+               l'heure prévue, par exemple) — jamais perdus silencieusement, visibles ici avec de quoi les renvoyer
+               tels quels ou les rouvrir en composition pour les corriger/reprogrammer. *@
+            <div class="widget-workspace-switch">
+                <button type="button" class="widget-icon-btn @(_showNotifications ? "is-active" : "")" @onclick="ToggleNotifications" title="Notifications (envois programmés en échec, rappels de tâches)">
+                    <i class="fa-solid fa-bell"></i>
+                    @{ var notifCount = FailedScheduledEmails.Count + DueTodoReminders.Count; }
+                    @if (notifCount > 0)
+                    {
+                        <span class="widget-notif-badge">@notifCount</span>
+                    }
+                </button>
+                @if (_showNotifications)
+                {
+                    @* Centrée dans la fenêtre du widget plutôt qu'ancrée à côté de la cloche (v1.34.5, correctif : une
+                       bulle ancrée à un bouton du bord de la fenêtre pouvait déborder hors du widget, qui est étroit,
+                       et provoquer une barre de défilement horizontale — voir la remarque sur .widget-popup-backdrop
+                       plus bas dans Builder.css, appliquée ici comme à toutes les autres bulles du widget). Le fond
+                       ferme la bulle au clic en dehors. *@
+                    <div class="widget-popup-backdrop" @onclick="() => _showNotifications = false"></div>
+                    <div class="widget-workspace-popup widget-notif-popup">
+                        @* v1.34.15, demandé explicitement : onglet "Historique" à côté des notifications actives —
+                           voir NotificationHistoryEntry/AppendNotificationHistory, journal séparé des deux listes
+                           "actives" ci-dessous (qui ne montrent que ce qui reste à traiter). *@
+                        <div class="widget-notif-tabs">
+                            <button type="button" class="widget-notif-tab @(!_notifShowHistory ? "is-active" : "")" @onclick="() => _notifShowHistory = false">Actives</button>
+                            <button type="button" class="widget-notif-tab @(_notifShowHistory ? "is-active" : "")" @onclick="() => _notifShowHistory = true">Historique</button>
+                        </div>
+                        @if (!_notifShowHistory)
+                        {
+                            @if (FailedScheduledEmails.Count == 0 && DueTodoReminders.Count == 0)
+                            {
+                                <p class="widget-hint">Aucune notification.</p>
+                            }
+                            else
+                            {
+                                @foreach (var (list, todo) in DueTodoReminders)
+                                {
+                                    <div class="widget-notif-item">
+                                        <div class="widget-notif-item-lines">
+                                            <span class="widget-notif-item-subject"><i class="fa-solid fa-list-check"></i> @todo.Text</span>
+                                            <span class="widget-notif-item-meta">@list.Name · échéance @todo.DueAt!.Value.ToString("dd/MM HH:mm")</span>
+                                        </div>
+                                        <div class="widget-notif-item-actions">
+                                            <button type="button" class="widget-icon-btn" @onclick="() => { OpenTodoDetail(list, todo); _showNotifications = false; }" title="Voir la tâche"><i class="fa-solid fa-eye"></i></button>
+                                            <button type="button" class="widget-icon-btn" @onclick="() => ToggleTodo(list, todo)" title="Marquer faite"><i class="fa-solid fa-check"></i></button>
+                                        </div>
+                                    </div>
+                                }
+                                @foreach (var s in FailedScheduledEmails)
+                                {
+                                    <div class="widget-notif-item">
+                                        <div class="widget-notif-item-lines">
+                                            <span class="widget-notif-item-subject">@(string.IsNullOrWhiteSpace(s.Subject) ? "(sans sujet)" : s.Subject)</span>
+                                            <span class="widget-notif-item-meta">à @s.To · prévu le @s.ScheduledAt.LocalDateTime.ToString("dd/MM HH:mm")</span>
+                                            <span class="widget-notif-item-error"><i class="fa-solid fa-triangle-exclamation"></i> @s.LastError</span>
+                                        </div>
+                                        <div class="widget-notif-item-actions">
+                                            <button type="button" class="widget-icon-btn" @onclick="() => RetryScheduled(s)" title="Renvoyer maintenant"><i class="fa-solid fa-rotate-right"></i></button>
+                                            <button type="button" class="widget-icon-btn" @onclick="() => { EditScheduled(s); _showNotifications = false; }" title="Modifier / reprogrammer"><i class="fa-solid fa-pen"></i></button>
+                                            <button type="button" class="widget-icon-btn widget-icon-btn-danger" @onclick="() => DismissScheduled(s)" title="Ignorer (retirer sans renvoyer)"><i class="fa-solid fa-trash"></i></button>
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        }
+                        else if (Config.Current.NotificationHistory.Count == 0)
+                        {
+                            <p class="widget-hint">Aucune notification passée.</p>
+                        }
+                        else
+                        {
+                            @foreach (var h in Config.Current.NotificationHistory)
+                            {
+                                <div class="widget-notif-item widget-notif-item-history">
+                                    <div class="widget-notif-item-lines">
+                                        <span class="widget-notif-item-subject"><i class="@NotificationHistoryIcon(h.Kind)"></i> @h.Text</span>
+                                        <span class="widget-notif-item-meta">@h.Meta · @h.At.ToString("dd/MM HH:mm")</span>
+                                    </div>
+                                </div>
+                            }
+                            <button type="button" class="settings-btn settings-btn-sm widget-notif-history-clear" @onclick="ClearNotificationHistory"><i class="fa-solid fa-trash"></i><span>Vider l'historique</span></button>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="widget-workspace-switch">
+                <button type="button" class="widget-icon-btn @(_showWorkspacePicker ? "is-active" : "")" @onclick="ToggleWorkspacePicker"
+                        disabled="@(Config.Current.WidgetWorkspaces.Count(w => w.Active) <= 1)" title="Changer d'espace de travail">
+                    <i class="fa-solid fa-layer-group"></i>
+                </button>
+                @if (_showWorkspacePicker)
+                {
+                    <div class="widget-popup-backdrop" @onclick="() => _showWorkspacePicker = false"></div>
+                    <div class="widget-workspace-popup">
+                        @* v1.34.12, clarifié : "Actif sur le widget" (réglable dans les Réglages, plusieurs à la fois) décide
+                           lesquels apparaissent ICI, dans ce sélecteur — choisir l'un d'eux ici change l'espace AFFICHÉ
+                           (exclusif, un seul à la fois pour le carrousel normal). Tous les espaces actifs contribuent leurs
+                           pages de veille, affiché ou non (voir IdleCarousel) — pas besoin d'un second réglage séparé ici. *@
+                        @foreach (var ws in Config.Current.WidgetWorkspaces.Where(w => w.Active))
+                        {
+                            <button type="button" class="widget-workspace-item @(ws.Id == Config.Current.ActiveWidgetWorkspaceId ? "is-active" : "")" @onclick="() => SelectWorkspace(ws)">
+                                <i class="fa-solid @(ws.Id == Config.Current.ActiveWidgetWorkspaceId ? "fa-circle-check" : "fa-circle")"></i>
+                                <span>@ws.Name</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+            <button type="button" class="widget-icon-btn @(Config.Current.WidgetAlwaysOnTop ? "is-active" : "")" @onclick="ToggleAlwaysOnTop"
+                    title="@(Config.Current.WidgetAlwaysOnTop ? "Toujours au premier plan : activé" : "Toujours au premier plan : désactivé")">
+                <i class="fa-solid fa-thumbtack"></i>
+            </button>
+            <button type="button" class="widget-icon-btn" @onclick="() => WidgetHost.OpenMainApp()" title="Ouvrir le constructeur de scripts">
+                <i class="fa-solid fa-up-right-from-square"></i>
+            </button>
+            <button type="button" class="widget-icon-btn" @onclick="() => WidgetHost.MinimizeWidget()" title="Réduire">
+                <i class="fa-solid fa-window-minimize"></i>
+            </button>
+            <button type="button" class="widget-icon-btn widget-icon-btn-danger" @onclick="() => WidgetHost.CloseWidget()" title="Fermer le widget">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+    </div>
+
+    <div class="widget-server">
+        @if (Carousel.Count > 0)
+        {
+            var page = Carousel[Math.Clamp(_carouselIndex, 0, Carousel.Count - 1)].Entry;
+            <div class="widget-carousel">
+                @foreach (var block in page.Blocks)
+                {
+                    @if (block.Type == "clock")
+                    {
+                        <div class="widget-clock widget-clock-page">
+                            <span class="widget-time">@_now.ToString("HH:mm:ss")</span>
+                            <span class="widget-date">@Capitalize(_now.ToString("dddd d MMMM", _culture))</span>
+                        </div>
+                    }
+                    else if (block.Type == "server")
+                    {
+                        @RenderServerControls(block.ShowServerPower, block.ShowServerRestart, block.ShowServerStopMacros)
+                    }
+                    else if (block.Type == "mail")
+                    {
+                        var mailList = MailResultsFor(block);
+                        <div class="widget-mail">
+                            <div class="widget-mail-head">
+                                <span>@MailBlockTitle(block)</span>
+                                <div class="widget-mail-head-actions">
+                                    <button type="button" class="widget-icon-btn" @onclick="() => OpenCompose(block)" disabled="@(ComposeAccountChoices.Count == 0)"
+                                            title="@(ComposeAccountChoices.Count == 0 ? "Configure l'envoi (SMTP) d'une boîte dans les Réglages pour écrire un message" : "Nouveau message")">
+                                        <i class="fa-solid fa-pen-to-square"></i>
+                                    </button>
+                                    @* Filtre (v1.34.3) : période de réception, favoris ou archivés — une seule vue à la fois. *@
+                                    <button type="button" class="widget-icon-btn @(_showMailFilterMenu ? "is-active" : "")" @onclick="ToggleMailFilterMenu" title="Filtrer le courrier affiché">
+                                        <i class="fa-solid fa-filter"></i>
+                                    </button>
+                                    <button type="button" class="widget-icon-btn" @onclick="RefreshMail" disabled="@_mailLoading" title="Actualiser">
+                                        <i class="fa-solid fa-rotate-right @(_mailLoading ? "fa-spin" : "")"></i>
+                                    </button>
+                                    @* v1.34.11 : la bulle elle-même (backdrop + liste) a été déplacée en dehors de .widget-server (voir
+                                       plus bas, juste avant la fermeture de .widget) — remontée à nouveau comme transparente/mal
+                                       positionnée malgré le correctif v1.34.10 (déplacement de container-type), reste ici SEULEMENT le
+                                       bouton déclencheur. *@
+                                </div>
+                            </div>
+                            @* Liste défilante séparée de l'en-tête (v1.34.3, correctif) : avant, toute la zone .widget-mail
+                               (en-tête + liste) défilait ensemble (overflow-y:auto), ce qui coupait le popup du filtre
+                               dès que la zone était courte (ex. "rien aujourd'hui") — un enfant en position:absolute
+                               reste toujours rogné par un ancêtre en overflow:auto/hidden, même positionné "par-dessus".
+                               Seule cette liste défile maintenant ; l'en-tête (et son popup) reste toujours entièrement
+                               visible, au-dessus. *@
+                            <div class="widget-mail-list">
+                                @if (mailList.Count == 0)
+                                {
+                                    <p class="widget-hint">@(_mailLoading ? "Chargement…" : MailEmptyHint)</p>
+                                }
+                                else
+                                {
+                                    @foreach (var acc in mailList)
+                                    {
+                                        @if (!acc.Success)
+                                        {
+                                            <p class="widget-mail-error"><i class="fa-solid fa-triangle-exclamation"></i> @acc.AccountName : @acc.Error</p>
+                                        }
+                                        else if (acc.Messages.Count == 0)
+                                        {
+                                            <p class="widget-hint">@acc.AccountName : rien aujourd'hui.</p>
+                                        }
+                                        else
+                                        {
+                                            @foreach (var m in acc.Messages)
+                                            {
+                                                <div class="widget-mail-item @(m.IsUnread ? "is-unread" : "")" @onclick="() => OpenMail(m)">
+                                                    <span class="widget-mail-avatar">@MailInitial(m.From)</span>
+                                                    <div class="widget-mail-lines">
+                                                        <div class="widget-mail-row">
+                                                            <span class="widget-mail-from">@m.From</span>
+                                                            <span class="widget-mail-time">@FormatMailTime(m.Received)</span>
+                                                        </div>
+                                                        <span class="widget-mail-subject">@m.Subject</span>
+                                                    </div>
+                                                    <div class="widget-mail-item-actions">
+                                                        <button type="button" class="widget-icon-btn @(m.IsFavorite ? "is-active" : "")" @onclick="() => ToggleFavorite(m)" @onclick:stopPropagation="true"
+                                                                title="@(m.IsFavorite ? "Retirer des favoris" : "Marquer comme favori")">
+                                                            <i class="fa-solid fa-star"></i>
+                                                        </button>
+                                                        <button type="button" class="widget-icon-btn @(m.IsArchived ? "is-active" : "")" @onclick="() => ToggleArchived(m)" @onclick:stopPropagation="true"
+                                                                title="@(m.IsArchived ? "Désarchiver" : "Archiver")">
+                                                            <i class="fa-solid fa-box-archive"></i>
+                                                        </button>
+                                                        <button type="button" class="widget-icon-btn widget-icon-btn-danger" @onclick="() => DeleteMailItem(m)" @onclick:stopPropagation="true" title="Supprimer">
+                                                            <i class="fa-solid fa-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            }
+                                        }
+                                    }
+                                }
+                            </div>
+                        </div>
+                    }
+                    else if (block.Type == "pins")
+                    {
+                        var pins = PinsFor(block);
+                        <div class="widget-pins" style="--cols:@Math.Max(1, block.PinColumns)">
+                            @foreach (var pin in pins)
+                            {
+                                <div class="widget-pin-slot @(pin.ImageOnly ? "pin-imageonly" : "")">
+                                    <KeyTile Button="@PinDisplayButton(pin)" State="@PinStateOf(pin)" ShowLabel="@(!pin.ImageOnly)" OnClick="() => HandlePinClick(pin)" />
+                                </div>
+                            }
+                        </div>
+                    }
+                    else if (block.Type == "weather")
+                    {
+                        @RenderWeatherBlock(block)
+                    }
+                    else if (block.Type == "worldclock")
+                    {
+                        @RenderWorldClockBlock(block)
+                    }
+                    else if (block.Type == "todo")
+                    {
+                        @RenderTodoBlock(block, true)
+                    }
+                    else if (block.Type == "calendar")
+                    {
+                        @RenderCalendarBlock(block)
+                    }
+                }
+            </div>
+        }
+
+        @* Page de veille : remplace le contenu ci-dessus quand la souris ne survole plus le widget depuis un délai
+           réglable (voir OnWidgetMouseLeave/OnWidgetMouseEnter) — en overlay, par-dessus le carrousel normal plutôt
+           qu'à sa place, pour ne pas perturber _carouselIndex ; disparaît dès que la souris revient. Depuis v1.34.6 :
+           chaque page choisit elle-même si elle y participe (voir IdleCarousel, WidgetPageEntry.ShowInIdle) — s'il y
+           en a plusieurs, elles alternent automatiquement (_idleCarouselIndex, voir StartIdleRotation). Contenu
+           volontairement simplifié pour "server"/"mail" (juste un résumé, pas les popups/actions) — voir
+           RenderIdleBlock, une page de veille n'a pas besoin d'être aussi interactive que l'affichage normal. *@
+        @if (_isIdle && IdleCarousel.Count > 0)
+        {
+            var idlePage = IdleCarousel[Math.Clamp(_idleCarouselIndex, 0, IdleCarousel.Count - 1)];
+            <div class="widget-idle-overlay" style="animation-duration:@(Math.Max(50, Config.Current.WidgetIdleTransitionMs))ms">
+                <div class="widget-carousel">
+                    @foreach (var block in idlePage.Blocks)
+                    {
+                        @RenderIdleBlock(block)
+                    }
+                </div>
+            </div>
+        }
+
+        @if (_message is not null)
+        {
+            <p class="widget-message">@_message</p>
+        }
+
+        @* v1.34.11 : la modale de détail de tâche a été déplacée en dehors de .widget-server (voir plus bas, juste
+           avant la fermeture de .widget) — toujours remontée comme transparente/mal positionnée malgré les deux
+           correctifs précédents (couleur fixe en v1.34.9, déplacement de container-type en v1.34.10). *@
+
+        @* Lecteur de courrier : overlay à l'intérieur de widget-server (position:relative) — reste sous l'en-tête
+           (heure/boutons), qui reste donc utilisable (fermer/réduire le widget) même en train de lire un message.
+           Fond opaque (--widget-solid-bg, posé par variante ci-dessous) : avant v1.32.0 ce fond était transparent
+           ("background: inherit" reprenait le fond DE widget-server, pas du widget — resté transparent), ce qui
+           faisait apparaître le lecteur comme du texte qui chevauche le reste plutôt qu'une vraie fenêtre par-dessus. *@
+        @if (_openMail is not null)
+        {
+            <div class="widget-mail-reader">
+                <div class="widget-mail-reader-head">
+                    @if (_mailViewMode == MailViewMode.Formatted)
+                    {
+                        <button type="button" class="widget-icon-btn" @onclick="CloseMail" title="Retour à la liste"><i class="fa-solid fa-arrow-left"></i></button>
+                    }
+                    else
+                    {
+                        <button type="button" class="widget-icon-btn" @onclick="BackToFormatted" title="Retour à la mise en forme"><i class="fa-solid fa-arrow-left"></i></button>
+                    }
+                    <div class="widget-mail-reader-titles">
+                        <span class="widget-mail-reader-subject">
+                            @(_mailViewMode == MailViewMode.Reply ? $"Répondre — {_openMail.Subject}" : _openMail.Subject)
+                        </span>
+                        <span class="widget-mail-reader-from">@_openMail.From · @FormatMailTime(_openMail.Received)</span>
+                    </div>
+                </div>
+
+                @if (_mailViewMode == MailViewMode.Formatted)
+                {
+                    @* Vue "mise en forme" (v1.33.0), par défaut à l'ouverture d'un message depuis v1.34.0 : sépare le
+                       dernier message des citations précédentes (lignes commençant par ">"), repliées par défaut — un
+                       long fil de discussion cité en entier ("Re: Re: Re:…") devient lisible d'un coup d'œil plutôt
+                       qu'un bloc unique truffé de ">>>". *@
+                    <div class="widget-mail-reader-body">
+                        @if (_openMailLoading)
+                        {
+                            <p class="widget-hint"><i class="fa-solid fa-spinner fa-spin"></i> Chargement du message…</p>
+                        }
+                        else if (_openMailError is not null)
+                        {
+                            <p class="widget-mail-error"><i class="fa-solid fa-triangle-exclamation"></i> @_openMailError</p>
+                        }
+                        else if (_openMailHtml is not null)
+                        {
+                            @* Message avec une version HTML (images intégrées transformées en data URI côté service,
+                               v1.34.1) : affiché tel quel plutôt que par le découpage en citations ">" ci-dessous, qui
+                               ne s'applique qu'au texte brut — un mail HTML cite rarement avec des ">" en début de
+                               ligne (plutôt des <blockquote>), donc ce découpage n'aurait rien à faire de toute façon. *@
+                            <div class="widget-mail-html" style="max-width:100%;overflow-x:auto;word-wrap:break-word;">@((MarkupString)_openMailHtml)</div>
+                        }
+                        else
+                        {
+                            @foreach (var block in FormattedBody)
+                            {
+                                @if (!block.IsQuote)
+                                {
+                                    @foreach (var para in block.Text.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
+                                    {
+                                        <p class="widget-mail-reader-text">@para.Trim('\n')</p>
+                                    }
+                                }
+                                else
+                                {
+                                    <details class="widget-mail-quote">
+                                        <summary>Message(s) précédent(s) cité(s)</summary>
+                                        <p class="widget-mail-reader-text widget-mail-quote-text">@block.Text</p>
+                                    </details>
+                                }
+                            }
+                        }
+                    </div>
+
+                    @if (!_openMailLoading && _openMailError is null)
+                    {
+                        <div class="widget-mail-reader-actions">
+                            <button type="button" class="widget-btn" @onclick="ShowDetail" title="Affiche le message brut, sans les citations repliées">
+                                <i class="fa-solid fa-align-justify"></i><span>Détails</span>
+                            </button>
+                            <button type="button" class="widget-btn" @onclick="ShowReplyMode" disabled="@(!CanReplyToOpenMail)" title="@(CanReplyToOpenMail ? "Répondre dans une fenêtre dédiée" : "Configure l'envoi (SMTP) de cette boîte dans les Réglages")">
+                                <i class="fa-solid fa-reply"></i><span>Répondre</span>
+                            </button>
+                        </div>
+                        @if (!CanReplyToOpenMail)
+                        {
+                            <p class="widget-hint"><i class="fa-solid fa-circle-info"></i> Configure l'envoi (SMTP) de cette boîte dans les Réglages pour répondre.</p>
+                        }
+                    }
+                }
+                else if (_mailViewMode == MailViewMode.Detail)
+                {
+                    <div class="widget-mail-reader-body">
+                        @if (_openMailLoading)
+                        {
+                            <p class="widget-hint"><i class="fa-solid fa-spinner fa-spin"></i> Chargement du message…</p>
+                        }
+                        else if (_openMailError is not null)
+                        {
+                            <p class="widget-mail-error"><i class="fa-solid fa-triangle-exclamation"></i> @_openMailError</p>
+                        }
+                        else
+                        {
+                            <p class="widget-mail-reader-text">@_openMailText</p>
+                        }
+                    </div>
+                }
+                else
+                {
+                    @* Répondre : fenêtre dédiée, séparée de la lecture (v1.33.0) — plutôt qu'une zone de texte ajoutée
+                       sous le message déjà affiché. *@
+                    <div class="widget-mail-reply">
+                        @if (_replySent)
+                        {
+                            <p class="widget-hint"><i class="fa-solid fa-circle-check"></i> Réponse envoyée.</p>
+                            <button type="button" class="widget-btn" @onclick="BackToFormatted"><span>Retour</span></button>
+                        }
+                        else
+                        {
+                            <textarea class="widget-reply-textarea" @bind="_replyText" placeholder="Ta réponse…" autofocus></textarea>
+
+                            @* Pièces jointes (v1.34.5) : ajoutées une par une via le sélecteur natif, chacune retirable. *@
+                            @if (_replyAttachments.Count > 0)
+                            {
+                                <div class="widget-compose-attachments">
+                                    @foreach (var att in _replyAttachments)
+                                    {
+                                        <span class="widget-compose-attachment-chip">
+                                            <i class="fa-solid fa-paperclip"></i>
+                                            <span class="widget-compose-attachment-name" title="@att.FileName">@att.FileName</span>
+                                            <span class="widget-compose-attachment-size">@FormatFileSize(att.Bytes.LongLength)</span>
+                                            <button type="button" @onclick="() => RemoveReplyAttachment(att)" aria-label="Retirer" title="Retirer"><i class="fa-solid fa-xmark"></i></button>
+                                        </span>
+                                    }
+                                </div>
+                            }
+                            <button type="button" class="widget-btn" @onclick="AddReplyAttachment"><i class="fa-solid fa-paperclip"></i><span>Joindre un fichier</span></button>
+
+                            @if (Config.Current.MailAccounts.FirstOrDefault(a => a.Id == _openMail!.AccountId) is { HasSignature: true })
+                            {
+                                <label class="widget-compose-schedule-toggle">
+                                    <input type="checkbox" @bind="_replySignatureOn" />
+                                    <span>Ajouter ma signature</span>
+                                </label>
+                            }
+
+                            <div class="widget-actions">
+                                <button type="button" class="widget-btn" @onclick="SendReply" disabled="@(_replySending || string.IsNullOrWhiteSpace(_replyText))">
+                                    <i class="fa-solid @(_replySending ? "fa-spinner fa-spin" : "fa-paper-plane")"></i><span>Envoyer</span>
+                                </button>
+                                <button type="button" class="widget-btn" @onclick="BackToFormatted" disabled="@_replySending"><span>Annuler</span></button>
+                            </div>
+                            @if (_replyError is not null)
+                            {
+                                <p class="widget-mail-error"><i class="fa-solid fa-triangle-exclamation"></i> @_replyError</p>
+                            }
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        @* Composition d'un nouveau message (v1.34.1) : overlay séparé de la lecture/réponse ci-dessus (pas de message
+           ouvert ici) — "À" et "Sujet" sont éditables, contrairement à "Répondre" qui les préremplit depuis le
+           message ouvert. Le compte d'envoi se choisit explicitement quand plusieurs boîtes ont le SMTP configuré. *@
+        @if (_composeOpen)
+        {
+            <div class="widget-mail-reader">
+                <div class="widget-mail-reader-head">
+                    <button type="button" class="widget-icon-btn" @onclick="CloseCompose" disabled="@_composeSending" title="Fermer"><i class="fa-solid fa-arrow-left"></i></button>
+                    <div class="widget-mail-reader-titles">
+                        <span class="widget-mail-reader-subject">Nouveau message</span>
+                    </div>
+                </div>
+                <div class="widget-mail-reply">
+                    @if (_composeSent)
+                    {
+                        <p class="widget-hint"><i class="fa-solid fa-circle-check"></i> @(_composeScheduled ? "Envoi programmé." : "Message envoyé.")</p>
+                        <button type="button" class="widget-btn" @onclick="CloseCompose"><span>Retour</span></button>
+                    }
+                    else
+                    {
+                        @if (ComposeAccountChoices.Count > 1)
+                        {
+                            <select class="widget-compose-field" @bind="_composeAccountId">
+                                @foreach (var acc in ComposeAccountChoices)
+                                {
+                                    <option value="@acc.Id">@(string.IsNullOrWhiteSpace(acc.DisplayName) ? acc.Username : acc.DisplayName)</option>
+                                }
+                            </select>
+                        }
+                        @* À (v1.34.5) : plusieurs adresses possibles, séparées par une virgule — autocomplétées avec les
+                           adresses déjà vues dans le courrier reçu (liste native du navigateur, "datalist" ci-dessous
+                           dans la racine du widget, remplie au fil des relèves — voir RegisterKnownContacts). *@
+                        <input class="widget-compose-field" @bind="_composeTo" @bind:event="oninput" list="widget-mail-contacts" placeholder="À (une ou plusieurs adresses, séparées par une virgule)" />
+                        <input class="widget-compose-field" @bind="_composeSubject" @bind:event="oninput" placeholder="Sujet" />
+                        <textarea class="widget-reply-textarea" @bind="_composeBody" placeholder="Ton message…" autofocus></textarea>
+
+                        @if (_composeAttachments.Count > 0)
+                        {
+                            <div class="widget-compose-attachments">
+                                @foreach (var att in _composeAttachments)
+                                {
+                                    <span class="widget-compose-attachment-chip">
+                                        <i class="fa-solid fa-paperclip"></i>
+                                        <span class="widget-compose-attachment-name" title="@att.FileName">@att.FileName</span>
+                                        <span class="widget-compose-attachment-size">@FormatFileSize(att.Bytes.LongLength)</span>
+                                        <button type="button" @onclick="() => RemoveComposeAttachment(att)" aria-label="Retirer" title="Retirer"><i class="fa-solid fa-xmark"></i></button>
+                                    </span>
+                                }
+                            </div>
+                        }
+                        <button type="button" class="widget-btn" @onclick="AddComposeAttachment"><i class="fa-solid fa-paperclip"></i><span>Joindre un fichier</span></button>
+
+                        @if (ComposeAccount(_composeAccountId) is { HasSignature: true })
+                        {
+                            <label class="widget-compose-schedule-toggle">
+                                <input type="checkbox" @bind="_composeSignatureOn" />
+                                <span>Ajouter ma signature</span>
+                            </label>
+                        }
+
+                        @* Programmer l'envoi (v1.34.1) plutôt qu'envoyer tout de suite : le message est stocké et
+                           envoyé automatiquement à l'heure choisie, tant que le widget (ou l'appli) tourne à ce
+                           moment-là — voir CheckScheduledEmails et la note dans la zone de notifications ci-dessus. *@
+                        <label class="widget-compose-schedule-toggle">
+                            <input type="checkbox" @bind="_composeScheduled" disabled="@(_composeAttachments.Count > 0)" />
+                            <span>Programmer l'envoi</span>
+                        </label>
+                        @if (_composeAttachments.Count > 0)
+                        {
+                            <p class="widget-hint"><i class="fa-solid fa-circle-info"></i> Un message avec des pièces jointes ne peut pas être programmé pour l'instant — envoie-le tout de suite, ou retire les pièces jointes.</p>
+                        }
+                        @if (_composeScheduled)
+                        {
+                            <input type="datetime-local" class="widget-compose-field" @bind="_composeScheduledAt" />
+                            <p class="widget-hint"><i class="fa-solid fa-circle-info"></i> L'envoi n'a lieu que si le widget ou l'application est ouvert à ce moment-là — sinon il part au prochain lancement, ou passe en échec ci-dessus si ça ne fonctionne toujours pas.</p>
+                        }
+
+                        <div class="widget-actions">
+                            <button type="button" class="widget-btn" @onclick="SendCompose" disabled="@(_composeSending || string.IsNullOrWhiteSpace(_composeTo))">
+                                <i class="fa-solid @(_composeSending ? "fa-spinner fa-spin" : (_composeScheduled ? "fa-clock" : "fa-paper-plane"))"></i>
+                                <span>@(_composeScheduled ? "Programmer" : "Envoyer")</span>
+                            </button>
+                            <button type="button" class="widget-btn" @onclick="CloseCompose" disabled="@_composeSending"><span>Annuler</span></button>
+                        </div>
+                        @if (_composeError is not null)
+                        {
+                            <p class="widget-mail-error"><i class="fa-solid fa-triangle-exclamation"></i> @_composeError</p>
+                        }
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    @* v1.34.11 : détail de tâche ET filtre courrier, déplacés ici (hors de .widget-server, la zone qui défile) —
+       toujours remontés comme transparents/mal placés malgré deux correctifs précédents (couleur fixe en v1.34.9,
+       déplacement de container-type de .widget-server vers .widget-pins en v1.34.10). Que la cause exacte soit ce
+       container-type ou autre chose, les sortir complètement de .widget-server règle le problème à la racine : leur
+       "position: fixed" ne peut plus être confiné par quoi que ce soit dans la zone défilante, seulement par .widget
+       lui-même (donc jamais). Les déclencheurs (bouton filtre dans l'en-tête du courrier, icône "info" sur une
+       tâche) restent à leur place ; seul l'affichage de la bulle/modale elle-même a bougé — l'état (_showMailFilterMenu,
+       _todoDetailTodo, etc.) est partagé normalement, peu importe où dans le balisage il est utilisé. *@
+    @if (_showMailFilterMenu)
+    {
+        <div class="widget-popup-backdrop" @onclick="() => _showMailFilterMenu = false"></div>
+        <div class="widget-workspace-popup widget-mail-filter-popup">
+            <button type="button" class="widget-workspace-item @(_mailFilter.Scope == MailViewScope.Period && _mailFilter.PeriodDays == 1 ? "is-active" : "")" @onclick='() => SetMailFilter(MailViewScope.Period, 1)'>
+                <i class="fa-solid fa-calendar-day"></i><span>Aujourd'hui</span>
+            </button>
+            <button type="button" class="widget-workspace-item @(_mailFilter.Scope == MailViewScope.Period && _mailFilter.PeriodDays == 7 ? "is-active" : "")" @onclick='() => SetMailFilter(MailViewScope.Period, 7)'>
+                <i class="fa-solid fa-calendar-week"></i><span>7 derniers jours</span>
+            </button>
+            <button type="button" class="widget-workspace-item @(_mailFilter.Scope == MailViewScope.Period && _mailFilter.PeriodDays == 30 ? "is-active" : "")" @onclick='() => SetMailFilter(MailViewScope.Period, 30)'>
+                <i class="fa-solid fa-calendar"></i><span>30 derniers jours</span>
+            </button>
+            <div class="widget-mail-filter-sep"></div>
+            <button type="button" class="widget-workspace-item @(_mailFilter.Scope == MailViewScope.Favorites ? "is-active" : "")" @onclick='() => SetMailFilter(MailViewScope.Favorites, 1)'>
+                <i class="fa-solid fa-star"></i><span>Favoris</span>
+            </button>
+            <button type="button" class="widget-workspace-item @(_mailFilter.Scope == MailViewScope.Archived ? "is-active" : "")" @onclick='() => SetMailFilter(MailViewScope.Archived, 1)'>
+                <i class="fa-solid fa-box-archive"></i><span>Archivés</span>
+            </button>
+        </div>
+    }
+
+    @if (_todoDetailTodo is { } detailTodo)
+    {
+        @* v1.34.12 : le composant partagé <Modal> continuait de mal s'afficher ici (mise en page de son en-tête
+           cassée, remonté avec capture d'écran) malgré un positionnement désormais correct — cause non identifiée
+           avec certitude (peut-être une règle CSS de la fenêtre principale qui s'applique différemment ici). Plutôt
+           que de continuer à deviner, cette bulle utilise maintenant EXACTEMENT le même mécanisme, déjà confirmé
+           fonctionnel, que le sélecteur d'espace et les notifications (.widget-popup-backdrop + .widget-workspace-popup),
+           avec son propre en-tête simple au lieu du composant <Modal>. *@
+        <div class="widget-popup-backdrop" @onclick="CloseTodoDetail"></div>
+        <div class="widget-workspace-popup widget-todo-detail-popup">
+            <div class="widget-todo-detail-head">
+                <span><i class="fa-solid fa-list-check"></i> Détail de la tâche</span>
+                <button type="button" class="widget-icon-btn" @onclick="CloseTodoDetail" title="Fermer"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="widget-todo-detail">
+                <p class="widget-todo-detail-text @(detailTodo.Done ? "is-done" : "")">@detailTodo.Text</p>
+                @if (!string.IsNullOrWhiteSpace(detailTodo.Description))
+                {
+                    <p class="widget-todo-detail-desc">@detailTodo.Description</p>
+                }
+                @if (detailTodo.DueAt is { } detailDue)
+                {
+                    <p class="settings-hint" style="margin:0"><i class="fa-solid fa-calendar-day"></i> Échéance : @detailDue.ToString("dddd d MMMM yyyy — HH:mm", _culture)</p>
+                    @if (detailTodo.NotifyDaysBefore > 0 || detailTodo.NotifyTarget != TodoNotifyTarget.Widget || detailTodo.NotifyRepeat != TodoNotifyRepeat.None)
+                    {
+                        <p class="settings-hint" style="margin:0">
+                            <i class="fa-solid fa-bell"></i> Rappel @(detailTodo.NotifyDaysBefore > 0 ? $"{detailTodo.NotifyDaysBefore} jour(s) avant" : "le jour même"),
+                            @TodoNotifyRepeatLabel(detailTodo.NotifyRepeat), @TodoNotifyTargetLabel(detailTodo.NotifyTarget)
+                        </p>
+                    }
+                }
+                <button type="button" class="settings-btn settings-btn-sm widget-todo-detail-remove" @onclick="() => HideTodo(_todoDetailList!, detailTodo)">
+                    <i class="fa-solid fa-eye-slash"></i><span>Retirer de la liste</span>
+                </button>
+                <p class="settings-hint" style="margin:6px 0 0"><i class="fa-solid fa-circle-info"></i> La tâche n'est pas supprimée — réactive-la depuis les Réglages du widget (bloc « Liste de tâches »).</p>
+            </div>
+        </div>
+    }
+
+    @if (_calendarDetailEntry is { } detailEntry)
+    {
+        <div class="widget-popup-backdrop" @onclick="CloseCalendarDetail"></div>
+        <div class="widget-workspace-popup widget-todo-detail-popup">
+            <div class="widget-todo-detail-head">
+                <span><i class="fa-solid fa-calendar-days"></i> Détail du créneau</span>
+                <button type="button" class="widget-icon-btn" @onclick="CloseCalendarDetail" title="Fermer"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="widget-todo-detail">
+                <p class="widget-todo-detail-text">@detailEntry.Label</p>
+                <p class="widget-todo-detail-desc">@detailEntry.Description</p>
+                <p class="settings-hint" style="margin:0"><i class="fa-solid fa-clock"></i> @CalendarTimeLabel(detailEntry.Start) – @CalendarTimeLabel(detailEntry.End)@(detailEntry.Recurring ? " — chaque semaine" : "")</p>
+            </div>
+        </div>
+    }
+
+    @* v1.35, demandé explicitement ("on doit pouvoir avoir les choix multiple sur le widget") : popup de choix d'une
+       touche "picker". v1.35 correctif : le composant partagé <ChoicePopup> (qui s'appuie sur <Modal>) ne s'ouvrait
+       JAMAIS ici — même cause que la remarque ci-dessus sur <Modal> (mise en page cassée dans CE widget précis,
+       cause non identifiée avec certitude) : passé au même mécanisme déjà confirmé fonctionnel ici
+       (.widget-popup-backdrop + .widget-workspace-popup) plutôt que de continuer à deviner. *@
+    @if (_pickerPin is { } pickerPin)
+    {
+        <div class="widget-popup-backdrop" @onclick="ClosePinPicker"></div>
+        <div class="widget-workspace-popup widget-picker-popup">
+            <div class="widget-todo-detail-head">
+                <span><i class="fa-solid fa-list-ul"></i> @(string.IsNullOrWhiteSpace(pickerPin.ScriptName) ? "Choisir" : pickerPin.ScriptName)</span>
+                <button type="button" class="widget-icon-btn" @onclick="ClosePinPicker" title="Fermer"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            @if (pickerPin.Options.Count == 0)
+            {
+                <p class="settings-hint" style="margin:8px 12px">Aucun choix configuré pour cette touche — ajoute-en dans la config du widget.</p>
+            }
+            else
+            {
+                @foreach (var opt in pickerPin.Options)
+                {
+                    <button type="button" class="widget-workspace-item" @onclick="() => PickPinOption(opt)">
+                        <i class="@(string.IsNullOrWhiteSpace(opt.Icon) ? "fa-solid fa-bolt" : opt.Icon)"></i><span>@opt.Label</span>
+                    </button>
+                }
+            }
+        </div>
+    }
+
+    @* v1.36.1, "le timer remplace le nom du bouton sur le bouton" : le décompte/chrono en cours s'affiche
+       directement SUR la touche d'origine (voir PinDisplayButton ci-dessous), plus dans un popup. Ce popup ne
+       garde plus que l'étape "en attente" (Pending) : demander la durée avant de démarrer réellement. Même
+       mécanisme que les autres popups de cette fenêtre (.widget-popup-backdrop) — cause déjà identifiée plus haut
+       pour <ChoicePopup> dans CETTE fenêtre précise. *@
+    @if (WidgetTimer.Current is { Pending: true } timerState)
+    {
+        <div class="widget-popup-backdrop" @onclick="StopWidgetTimer"></div>
+        <div class="widget-workspace-popup timerdisplay" style="position:fixed">
+            <div class="timerdisplay-pending">
+                <span class="timerdisplay-label">@timerState.Label</span>
+                <div class="timercfg-duration">
+                    <label class="timercfg-duration-field"><span>h</span><NumberStepper Value="_pendingHours" ValueChanged="@(v => _pendingHours = v)" Min="0" Max="23" /></label>
+                    <label class="timercfg-duration-field"><span>min</span><NumberStepper Value="_pendingMinutes" ValueChanged="@(v => _pendingMinutes = v)" Min="0" Max="59" /></label>
+                    <label class="timercfg-duration-field"><span>s</span><NumberStepper Value="_pendingSeconds" ValueChanged="@(v => _pendingSeconds = v)" Min="0" Max="59" /></label>
+                </div>
+                <button type="button" class="settings-btn timerdisplay-start" @onclick="ConfirmWidgetTimer"><i class="fa-solid fa-play"></i><span>Démarrer</span></button>
+            </div>
+        </div>
+    }
+
+    @* Toujours en dehors de la zone défilante ci-dessus : sans ça, les flèches/points ne restaient visibles que si
+       on avait déjà scrollé jusqu'en bas — hors qu'ils doivent permettre de naviguer en permanence, comme sur
+       l'appli mobile. *@
+    @if (Carousel.Count > 1)
+    {
+        <div class="widget-pages">
+            <button type="button" class="widget-icon-btn" disabled="@(_carouselIndex == 0)" @onclick="() => ChangePage(-1)" title="Page précédente"><i class="fa-solid fa-chevron-left"></i></button>
+            <span class="widget-page-dots">
+                @for (var i = 0; i < Carousel.Count; i++)
+                {
+                    var dotPage = i;
+                    <span class="widget-page-dot @(dotPage == _carouselIndex ? "is-active" : "")" @onclick="() => GoToPage(dotPage)"></span>
+                }
+            </span>
+            <button type="button" class="widget-icon-btn" disabled="@(_carouselIndex >= Carousel.Count - 1)" @onclick="() => ChangePage(1)" title="Page suivante"><i class="fa-solid fa-chevron-right"></i></button>
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly System.Globalization.CultureInfo _culture = System.Globalization.CultureInfo.GetCultureInfo("fr-FR");
+
+    private DateTime _now = DateTime.Now;
+    private ServerStatus? _status;
+    private bool _busy;
+    private string? _message;
+    private Timer? _clockTimer;
+    private Timer? _statusTimer;
+    private Timer? _mailTimer;
+    private int _mailIntervalMinutes;
+    private Timer? _weatherTimer;
+    private Timer? _idleTimer;
+    private Timer? _idleRotateTimer;
+    private bool _isIdle;
+    private int _idleCarouselIndex;
+    private readonly HashSet<string> _busyPins = new(StringComparer.OrdinalIgnoreCase);
+    private DotNetObjectReference<Widget>? _dragRef;
+
+    private List<MailAccountResult> _mailResults = new();
+    private bool _mailLoading;
+    private bool _mailFirstLoadDone;
+    private HashSet<(string AccountId, uint Uid)> _seenMailUids = new();
+
+    // ----- Filtre d'affichage du courrier (v1.34.3) : période / favoris / archivés, jamais persisté. -----
+    private bool _showMailFilterMenu;
+    private MailFilter _mailFilter = new();
+    private void ToggleMailFilterMenu() => _showMailFilterMenu = !_showMailFilterMenu;
+    private void SetMailFilter(MailViewScope scope, int periodDays)
+    {
+        _mailFilter = new MailFilter { Scope = scope, PeriodDays = periodDays };
+        _showMailFilterMenu = false;
+        _ = RefreshMail();
+    }
+    private string MailEmptyHint => _mailFilter.Scope switch
+    {
+        MailViewScope.Favorites => "Aucun message favori.",
+        MailViewScope.Archived => "Aucun message archivé.",
+        _ when _mailFilter.PeriodDays == 1 => "Aucun message aujourd'hui.",
+        _ => $"Aucun message sur les {_mailFilter.PeriodDays} derniers jours."
+    };
+
+    private bool _showWorkspacePicker;
+    private bool _showNotifications;
+    private bool _notifShowHistory;
+    private void ToggleNotifications() => _showNotifications = !_showNotifications;
+
+    private static string NotificationHistoryIcon(string kind) => kind switch
+    {
+        "todo" => "fa-solid fa-list-check",
+        "mail-sent" => "fa-solid fa-paper-plane",
+        "mail-failed" => "fa-solid fa-triangle-exclamation",
+        _ => "fa-solid fa-bell"
+    };
+
+    private void ClearNotificationHistory() => Config.Update(c => c.NotificationHistory.Clear());
+
+    // ----- Lecteur de courrier (message complet, ouvert au clic sur un message) + réponse (SMTP, v1.32.0) -----
+    // Depuis v1.33.0 : trois écrans distincts dans le même overlay plutôt qu'une seule vue avec tout empilé — Mise en
+    // forme (citations ">" repliées, pour les longs fils de discussion), Détails (texte brut) et Répondre (fenêtre de
+    // composition dédiée). Depuis v1.34.0 : "Mise en forme" est l'écran d'accueil à l'ouverture d'un message (plus
+    // lisible par défaut) — la flèche "retour" ferme le message depuis cet écran, et y ramène depuis "Détails" ou
+    // "Répondre" plutôt que de fermer directement. Voir MailViewMode ci-dessous.
+    private enum MailViewMode { Detail, Formatted, Reply }
+
+    private MailViewMode _mailViewMode = MailViewMode.Formatted;
+    private MailSummary? _openMail;
+    private bool _openMailLoading;
+    private string? _openMailError;
+    private string? _openMailText;
+
+    /// <summary>Version HTML du message (images intégrées déjà remplacées par des data URI), null si le message n'en a pas — voir MailFetchService.FetchBodyAsync (v1.34.1).</summary>
+    private string? _openMailHtml;
+    private string? _openMailMessageId;
+    private string _replyText = "";
+    private bool _replySending;
+    private string? _replyError;
+    private bool _replySent;
+
+    /// <summary>Pièces jointes et signature pour "Répondre" (v1.34.5) — mêmes mécanismes que la composition (voir plus bas).</summary>
+    private List<MailAttachmentData> _replyAttachments = new();
+    private bool _replySignatureOn;
+
+    // ----- Composition d'un nouveau message (v1.34.1, indépendant de la lecture/réponse ci-dessus) -----
+    private bool _composeOpen;
+    private string _composeAccountId = "";
+    private string _composeTo = "";
+    private string _composeSubject = "";
+    private string _composeBody = "";
+    private bool _composeSending;
+    private string? _composeError;
+    private bool _composeSent;
+
+    /// <summary>Pièces jointes en attente d'envoi (v1.34.5) — voir <see cref="MailAttachmentData"/> ; jamais pour un envoi programmé (voir SendCompose).</summary>
+    private List<MailAttachmentData> _composeAttachments = new();
+
+    /// <summary>Coché par défaut dès qu'un compte a une signature active (v1.34.5, voir <see cref="MailAccount.SignatureEnabled"/>) — modifiable au cas par cas pour ce message précis.</summary>
+    private bool _composeSignatureOn;
+
+    /// <summary>Adresses connues (v1.34.5) pour l'autocomplétion du champ "À" — collectées au fil des relèves de courrier (expéditeurs vus), jamais persistées : reparties de zéro à chaque lancement du widget.</summary>
+    private readonly Dictionary<string, string> _knownContacts = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Envoi différé (v1.34.1) plutôt qu'immédiat — coché, une date/heure devient obligatoire et "Envoyer" enregistre un <see cref="ScheduledEmail"/> au lieu d'envoyer tout de suite.</summary>
+    private bool _composeScheduled;
+    private DateTime? _composeScheduledAt;
+
+    /// <summary>Id du <see cref="ScheduledEmail"/> en cours de modification (bouton "Modifier" de la zone de notifications) — remplacé (retiré puis recréé) plutôt que dupliqué à l'envoi/à la reprogrammation. Null pour un message tout à fait nouveau.</summary>
+    private string? _editingScheduledId;
+
+    /// <summary>Boîtes avec l'envoi (SMTP) configuré — seules à pouvoir être utilisées pour écrire un nouveau message.</summary>
+    private List<MailAccount> ComposeAccountChoices => Config.Current.MailAccounts.Where(a => a.SmtpEnabled).ToList();
+
+    private void OpenCompose(WidgetPageBlock block)
+    {
+        var choices = ComposeAccountChoices;
+        if (choices.Count == 0) return;
+        _openMail = null;
+        _composeOpen = true;
+        _composeAccountId = choices.FirstOrDefault(a => a.Id == block.MailAccountId)?.Id ?? choices[0].Id;
+        _composeTo = "";
+        _composeSubject = "";
+        _composeBody = "";
+        _composeScheduled = false;
+        _composeScheduledAt = null;
+        _editingScheduledId = null;
+        _composeError = null;
+        _composeSent = false;
+        _composeAttachments = new();
+        _composeSignatureOn = ComposeAccount(_composeAccountId) is { } acc && acc.SignatureEnabled && acc.HasSignature;
+    }
+
+    private MailAccount? ComposeAccount(string accountId) => Config.Current.MailAccounts.FirstOrDefault(a => a.Id == accountId);
+
+    /// <summary>Découpe une saisie "À" en plusieurs adresses (v1.34.5) — séparées par une virgule ou un point-virgule, espaces et doublons ignorés.</summary>
+    private static List<string> SplitRecipients(string raw) =>
+        raw.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+           .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>Ouvre la composition pré-remplie avec un envoi programmé en échec ("Modifier" de la zone de notifications, v1.34.1) — une nouvelle date/heure (par défaut dans 5 minutes) doit être choisie puisque celle d'origine est passée.</summary>
+    private void EditScheduled(ScheduledEmail s)
+    {
+        _openMail = null;
+        _composeOpen = true;
+        _composeAccountId = s.AccountId;
+        _composeTo = s.To;
+        _composeSubject = s.Subject;
+        _composeBody = s.Body;
+        _composeScheduled = true;
+        _composeScheduledAt = DateTime.Now.AddMinutes(5);
+        _editingScheduledId = s.Id;
+        _composeError = null;
+        _composeSent = false;
+        _composeAttachments = new(); // pas supportées pour un envoi programmé, voir SendCompose
+        _composeSignatureOn = false;
+    }
+
+    private void CloseCompose()
+    {
+        _composeOpen = false;
+        _composeTo = "";
+        _composeSubject = "";
+        _composeBody = "";
+        _composeScheduled = false;
+        _composeScheduledAt = null;
+        _editingScheduledId = null;
+        _composeError = null;
+        _composeSent = false;
+        _composeAttachments = new();
+    }
+
+    /// <summary>Ajoute une pièce jointe choisie via le sélecteur natif (v1.34.5) — lue en mémoire tout de suite, rien
+    /// n'est envoyé tant que le message n'est pas réellement envoyé. Pas de limite de taille imposée ici : un fichier
+    /// trop gros échouera simplement à l'envoi (rejeté par la plupart des serveurs SMTP au-delà de 20-25 Mo), l'erreur
+    /// du serveur remonte alors normalement dans <c>_composeError</c>/<c>_replyError</c>.</summary>
+    private async Task AddComposeAttachment()
+    {
+        string? path;
+        try { path = await Picker.PickFileAsync(null); }
+        catch (Exception) { return; } // sélecteur indisponible : pas d'attachement plutôt qu'une erreur bruyante
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(path);
+            _composeAttachments.Add(new MailAttachmentData { FileName = Path.GetFileName(path), Bytes = bytes, ContentType = GuessContentType(path) });
+        }
+        catch (Exception ex) { _composeError = $"Impossible de lire ce fichier : {ex.Message}"; }
+        StateHasChanged();
+    }
+
+    private void RemoveComposeAttachment(MailAttachmentData att) => _composeAttachments.Remove(att);
+
+    private static string GuessContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".gif" => "image/gif",
+        ".webp" => "image/webp",
+        ".pdf" => "application/pdf",
+        ".txt" => "text/plain",
+        ".zip" => "application/zip",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _ => "application/octet-stream"
+    };
+
+    // Méthode "if" classique plutôt qu'un switch expression à motifs relationnels ("< 1024 => …") : un "<" en tout
+    // début de ligne dans un bloc @code est ambigu pour l'analyseur Razor (peut être lu comme le début d'une balise),
+    // ce qui empêchait TOUT le fichier de compiler plus loin (v1.34.5, corrigé ici).
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} o";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:0.#} Ko";
+        return $"{bytes / (1024.0 * 1024):0.#} Mo";
+    }
+
+    /// <summary>Retire l'éventuel envoi programmé en cours de modification (remplacé par le nouvel envoi/la nouvelle programmation) — appelé juste avant d'ajouter le remplaçant, dans le même Config.Update, pour ne jamais avoir les deux en même temps même en cas d'échec entre les deux.</summary>
+    private void RemoveEditingScheduled(BuilderConfig c)
+    {
+        if (_editingScheduledId is not null) c.ScheduledEmails.RemoveAll(x => x.Id == _editingScheduledId);
+    }
+
+    private async Task SendCompose()
+    {
+        if (string.IsNullOrWhiteSpace(_composeAccountId) || string.IsNullOrWhiteSpace(_composeTo)) return;
+        var recipients = SplitRecipients(_composeTo);
+        if (recipients.Count == 0) return;
+
+        if (_composeScheduled)
+        {
+            if (_composeScheduledAt is null || _composeScheduledAt.Value <= DateTime.Now)
+            {
+                _composeError = "Choisis une date et une heure dans le futur.";
+                return;
+            }
+            if (_composeAttachments.Count > 0)
+            {
+                // Pas encore supporté (v1.34.5) : ScheduledEmail est stocké tel quel dans config.json, y ajouter des
+                // pièces jointes (potentiellement volumineuses, encodées en base64) alourdirait ce fichier — retire-les
+                // ou envoie tout de suite plutôt que de les perdre silencieusement à l'heure programmée.
+                _composeError = "Les pièces jointes ne sont pas encore prises en charge pour un envoi programmé — retire-les, ou envoie le message tout de suite.";
+                return;
+            }
+
+            var scheduled = new ScheduledEmail
+            {
+                AccountId = _composeAccountId,
+                To = string.Join(", ", recipients),
+                Subject = _composeSubject,
+                Body = _composeBody,
+                ScheduledAt = _composeScheduledAt.Value,
+                Status = ScheduledEmailStatus.Pending
+            };
+            Config.Update(c => { RemoveEditingScheduled(c); c.ScheduledEmails.Add(scheduled); });
+            _editingScheduledId = null;
+            _composeSent = true;
+            _composeTo = "";
+            _composeSubject = "";
+            _composeBody = "";
+            StateHasChanged();
+            return;
+        }
+
+        _composeSending = true;
+        _composeError = null;
+        _composeSent = false;
+        StateHasChanged();
+        try
+        {
+            var result = await Mail.SendReplyAsync(_composeAccountId, recipients, _composeSubject, _composeBody,
+                inReplyToMessageId: null, includeSignature: _composeSignatureOn, attachments: _composeAttachments);
+            if (result.Success)
+            {
+                if (_editingScheduledId is not null) { Config.Update(RemoveEditingScheduled); _editingScheduledId = null; }
+                _composeSent = true;
+                _composeTo = "";
+                _composeSubject = "";
+                _composeBody = "";
+                _composeAttachments = new();
+            }
+            else _composeError = result.Error;
+        }
+        catch (Exception ex) { _composeError = ex.Message; }
+        finally
+        {
+            _composeSending = false;
+            StateHasChanged();
+        }
+    }
+
+    // ----- Envois programmés (v1.34.1) : vérifiés au lancement du widget puis toutes les minutes (voir OnInitializedAsync)
+    // — pas de service séparé toujours actif, donc un envoi programmé pour un moment où le widget/l'appli n'était pas
+    // ouvert ne part qu'au prochain lancement (rattrapage), jamais rétroactivement tout seul en arrière-plan. -----
+
+    private Timer? _scheduledEmailTimer;
+    private Timer? _todoNotifyTimer;
+
+    /// <summary>Envois en échec (visibles dans la zone de notifications) — les réussis et les encore en attente n'y apparaissent pas.</summary>
+    private List<ScheduledEmail> FailedScheduledEmails => Config.Current.ScheduledEmails.Where(s => s.Status == ScheduledEmailStatus.Failed).ToList();
+
+    /// <summary>
+    /// v1.34.9 : tâches dont le rappel vient de se déclencher (voir <see cref="CheckTodoNotifications"/>), visibles
+    /// dans la MÊME zone de notifications (cloche) que les envois en échec ci-dessus — remonté : une cible « Widget
+    /// seulement » ne changeait auparavant QUE la couleur du texte dans la liste (voir <c>is-upcoming</c>,
+    /// RenderTodoBlock), rien qui attire vraiment l'œil ni ne se remarque si la page affichée n'est pas celle de la
+    /// tâche — ça ne ressemblait pas à "une notification" malgré le nom du réglage. Une tâche « Windows » pure n'a
+    /// rien à faire ici (déjà notifiée nativement) ; le badge de la cloche compte les deux zones ensemble. Reste dans
+    /// la liste jusqu'à ce que la tâche soit cochée ou son échéance modifiée (mêmes mécanismes existants qui vident
+    /// déjà <see cref="TodoItem.LastNotifiedForDueAt"/> ou la retirent des tâches non faites) — pas de bouton
+    /// "ignorer" séparé, ouvrir son détail suffit à la traiter.
+    /// </summary>
+    private List<(TodoListInfo List, TodoItem Todo)> DueTodoReminders =>
+        Config.Current.TodoLists
+            .SelectMany(l => l.Items.Where(t => !t.Done && t.DueAt is not null && t.LastNotifiedForDueAt == t.DueAt && t.NotifyTarget != TodoNotifyTarget.Windows).Select(t => (List: l, Todo: t)))
+            .ToList();
+
+    private async Task CheckScheduledEmails()
+    {
+        var due = Config.Current.ScheduledEmails.Where(s => s.Status == ScheduledEmailStatus.Pending && s.ScheduledAt <= DateTimeOffset.Now).ToList();
+        if (due.Count == 0) return;
+        foreach (var s in due) await AttemptScheduledSend(s.Id);
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Rappels de tâches (v1.34.7 ; v1.34.8 : les tâches vivent dans la bibliothèque <see cref="BuilderConfig.TodoLists"/>
+    /// plutôt que dans les blocs — une seule liste peut être visible sur plusieurs pages/espaces à la fois, donc on la
+    /// parcourt directement une seule fois plutôt que bloc par bloc, pour ne pas prévenir deux fois la même tâche).
+    /// Déclenche le rappel dès que <c>DueAt - NotifyDaysBefore jours</c> est atteint et pas encore fait pour CETTE
+    /// échéance (voir <see cref="TodoItem.LastNotifiedForDueAt"/>, qui évite de renotifier en boucle toutes les 60
+    /// secondes). Une notification Windows n'est envoyée que si <see cref="TodoNotifyTarget"/> le demande — sinon la
+    /// mise en évidence dans le widget (voir RenderTodoBlock, <c>is-upcoming</c>) suffit.
+    /// </summary>
+    private void CheckTodoNotifications()
+    {
+        var now = DateTime.Now;
+        var toNotify = new List<TodoItem>();
+        foreach (var list in Config.Current.TodoLists)
+        foreach (var t in list.Items)
+        {
+            if (t.Done || t.DueAt is not { } due) continue;
+            var remindAt = due.AddDays(-Math.Max(0, t.NotifyDaysBefore));
+            if (now >= remindAt && t.LastNotifiedForDueAt != due) toNotify.Add(t);
+        }
+        if (toNotify.Count == 0) return;
+
+        foreach (var todo in toNotify)
+        {
+            if (todo.NotifyTarget is TodoNotifyTarget.Windows or TodoNotifyTarget.Both)
+            {
+                try { WidgetHost.Notify(todo.Text, todo.DueAt!.Value.ToString("dddd d MMMM 'à' HH:mm", _culture)); }
+                catch (Exception) { /* notification manquée : la tâche reste de toute façon visible dans le widget */ }
+            }
+        }
+
+        var notifiedIds = toNotify.Select(t => t.Id).ToHashSet();
+        Config.Update(c =>
+        {
+            foreach (var t in c.TodoLists.SelectMany(l => l.Items).Where(t => notifiedIds.Contains(t.Id)))
+                t.LastNotifiedForDueAt = t.DueAt;
+            foreach (var todo in toNotify)
+            {
+                AppendNotificationHistory(c, "todo", todo.Text,
+                    todo.DueAt is { } due ? $"Échéance {due:dd/MM HH:mm}" : "");
+            }
+        });
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// v1.34.15 : ajoute une entrée à l'historique des notifications (plus récente en tête), plafonné à
+    /// <c>NotificationHistoryMaxEntries</c> — appelé depuis l'intérieur d'un <see cref="BuilderConfigService.Update"/>
+    /// en cours (jamais seul : pas de sens de journaliser sans le changement d'état qui va avec).
+    /// </summary>
+    private static void AppendNotificationHistory(BuilderConfig c, string kind, string text, string meta)
+    {
+        c.NotificationHistory.Insert(0, new NotificationHistoryEntry { Kind = kind, Text = text, Meta = meta });
+        const int max = 100;
+        if (c.NotificationHistory.Count > max) c.NotificationHistory.RemoveRange(max, c.NotificationHistory.Count - max);
+    }
+
+    /// <summary>Tentative d'envoi (au moment prévu, ou manuellement via "Renvoyer") — met à jour le même <see cref="ScheduledEmail"/> par son Id plutôt que de le recréer, pour conserver <see cref="ScheduledEmail.Attempts"/>.</summary>
+    private async Task AttemptScheduledSend(string scheduledId)
+    {
+        var s = Config.Current.ScheduledEmails.FirstOrDefault(x => x.Id == scheduledId);
+        if (s is null) return;
+        string? error = null;
+        try
+        {
+            var result = await Mail.SendReplyAsync(s.AccountId, SplitRecipients(s.To), s.Subject, s.Body, s.InReplyToMessageId);
+            if (!result.Success) error = result.Error ?? "Échec de l'envoi.";
+        }
+        catch (Exception ex) { error = ex.Message; }
+
+        Config.Update(c =>
+        {
+            var item = c.ScheduledEmails.FirstOrDefault(x => x.Id == scheduledId);
+            if (item is null) return;
+            item.Attempts++;
+            var subject = string.IsNullOrWhiteSpace(item.Subject) ? "(sans sujet)" : item.Subject;
+            if (error is null)
+            {
+                item.Status = ScheduledEmailStatus.Sent; item.SentAt = DateTimeOffset.Now; item.LastError = null;
+                AppendNotificationHistory(c, "mail-sent", subject, $"à {item.To}");
+            }
+            else
+            {
+                item.Status = ScheduledEmailStatus.Failed; item.LastError = error;
+                AppendNotificationHistory(c, "mail-failed", subject, error);
+            }
+        });
+    }
+
+    private async Task RetryScheduled(ScheduledEmail s)
+    {
+        await AttemptScheduledSend(s.Id);
+        StateHasChanged();
+    }
+
+    private void DismissScheduled(ScheduledEmail s) => Config.Update(c => c.ScheduledEmails.RemoveAll(x => x.Id == s.Id));
+
+    private sealed record MailBodyBlock(bool IsQuote, string Text);
+
+    /// <summary>
+    /// Découpe le corps du message en blocs "texte normal" / "citation" (lignes commençant par un ou plusieurs ">",
+    /// convention universelle des clients mail en réponse en texte brut) — chaque bloc de citation, quel que soit son
+    /// niveau d'imbrication (">", ">>", ">>>"…), est débarrassé de ses préfixes et regroupé pour être replié d'un
+    /// bloc, plutôt que de laisser les ">>>" bruts se mélanger au texte comme dans la vue "Détails".
+    /// </summary>
+    private static List<MailBodyBlock> SplitMailBody(string text)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var blocks = new List<MailBodyBlock>();
+        var current = new List<string>();
+        bool currentIsQuote = false;
+        var hasCurrent = false;
+
+        void Flush()
+        {
+            if (!hasCurrent) return;
+            var joined = string.Join("\n", current).Trim('\n');
+            if (joined.Length > 0) blocks.Add(new MailBodyBlock(currentIsQuote, joined));
+            current.Clear();
+            hasCurrent = false;
+        }
+
+        foreach (var rawLine in lines)
+        {
+            var isQuote = rawLine.TrimStart().StartsWith('>');
+            var content = isQuote ? System.Text.RegularExpressions.Regex.Replace(rawLine, @"^\s*(>\s?)+", "") : rawLine;
+            if (hasCurrent && isQuote != currentIsQuote) Flush();
+            currentIsQuote = isQuote;
+            hasCurrent = true;
+            current.Add(content);
+        }
+        Flush();
+        return blocks;
+    }
+
+    private List<MailBodyBlock> FormattedBody => _openMailText is null ? new List<MailBodyBlock>() : SplitMailBody(_openMailText);
+
+    // ----- Carrousel : une page = son propre contenu librement composé (v1.32.0, voir WidgetPageEntry) -----
+
+    private record CarouselPage(WidgetPageEntry Entry);
+
+    private int _carouselIndex;
+
+    /// <summary>v1.34.11 : retour à un seul espace "affiché" à la fois (le détour v1.34.10 vers plusieurs espaces actifs pour le carrousel normal a été retiré, voir WidgetWorkspace).</summary>
+    /// <summary>v1.34.12 : l'espace affiché doit aussi être actif (voir WidgetWorkspace.Active) — si celui pointé par
+    /// ActiveWidgetWorkspaceId a été désactivé entre-temps, retombe sur le premier espace actif trouvé.</summary>
+    private WidgetWorkspace? ActiveWorkspace =>
+        Config.Current.WidgetWorkspaces.FirstOrDefault(w => w.Id == Config.Current.ActiveWidgetWorkspaceId && w.Active)
+        ?? Config.Current.WidgetWorkspaces.FirstOrDefault(w => w.Active)
+        ?? Config.Current.WidgetWorkspaces.FirstOrDefault();
+
+    /// <summary>Un bloc de courrier sans boîte précise (MailAccountId vide) regroupe toutes les boîtes activées (comportement d'origine) ; avec une boîte précise, n'apparaît que si celle-ci existe encore et est activée.</summary>
+    private bool MailBlockHasAccount(WidgetPageBlock block) =>
+        string.IsNullOrEmpty(block.MailAccountId)
+            ? Config.Current.MailAccounts.Any(a => a.Enabled)
+            : Config.Current.MailAccounts.Any(a => a.Id == block.MailAccountId && a.Enabled);
+
+    private List<MailAccountResult> MailResultsFor(WidgetPageBlock block) =>
+        string.IsNullOrEmpty(block.MailAccountId) ? _mailResults : _mailResults.Where(r => r.AccountId == block.MailAccountId).ToList();
+
+    private string MailBlockTitle(WidgetPageBlock block)
+    {
+        if (string.IsNullOrEmpty(block.MailAccountId)) return "Courrier du jour";
+        var acc = Config.Current.MailAccounts.FirstOrDefault(a => a.Id == block.MailAccountId);
+        return acc is null ? "Courrier du jour" : (string.IsNullOrWhiteSpace(acc.DisplayName) ? acc.Username : acc.DisplayName);
+    }
+
+    /// <summary>Touches choisies pour ce bloc précis (v1.34.0), dans l'ordre choisi — une touche retirée des réglages depuis disparaît simplement de la sélection.</summary>
+    private List<WidgetPin> PinsFor(WidgetPageBlock block) =>
+        block.PinIds
+            .Select(id => Config.Current.WidgetPins.FirstOrDefault(p => p.Id == id))
+            .Where(p => p is not null && !string.IsNullOrWhiteSpace(p!.ScriptName) && !p.Hidden)
+            .Select(p => p!)
+            .ToList();
+
+    /// <summary>Un bloc a réellement quelque chose à montrer (une boîte mail supprimée, ou plus aucune touche sélectionnée encore valide, ne comptent pas).</summary>
+    private bool BlockHasVisibleContent(WidgetPageBlock block) => block.Type switch
+    {
+        "clock" => true,
+        "server" => true,
+        "mail" => MailBlockHasAccount(block),
+        "pins" => PinsFor(block).Count > 0,
+        "weather" => !string.IsNullOrWhiteSpace(block.WeatherLocationName),
+        "worldclock" => !string.IsNullOrWhiteSpace(block.WorldClockTimeZoneId),
+        "todo" => !string.IsNullOrEmpty(block.TodoListId),
+        // v1.37.3, corrige un bug signalé explicitement ("si mon widget a uniquement calendar sa ne le consider pas
+        // comme une page et que je dois ajouté genre horloge") : "calendar" manquait ici, donc une page contenant
+        // SEULEMENT un bloc calendrier n'avait "rien à montrer" et disparaissait du carrousel — toujours vrai, le
+        // bloc affiche quelque chose même sans créneau ce jour-là (le message "Aucun créneau ce jour-là…").
+        "calendar" => true,
+        _ => false
+    };
+
+    /// <summary>Une page n'apparaît dans le carrousel que si au moins un de ses blocs a réellement quelque chose à montrer.</summary>
+    private bool PageHasVisibleContent(WidgetPageEntry entry) => entry.Blocks.Any(BlockHasVisibleContent);
+
+    // v1.34.11 : retour à un seul espace affiché (ActiveWorkspace) pour le carrousel NORMAL — le détour v1.34.10
+    // (fusion de tous les espaces "actifs") est retiré, ça ne correspondait pas à ce qui était demandé : chaque
+    // espace garde ses propres pages, un seul affiché à la fois sur le widget.
+    // IdleOnly (v1.34.6) : une page qui ne doit apparaître QU'en veille est retirée du carrousel normal.
+    private List<CarouselPage> Carousel
+    {
+        get
+        {
+            var workspace = ActiveWorkspace;
+            if (workspace is null) return new List<CarouselPage>();
+            return workspace.Pages.Where(p => !p.IdleOnly && PageHasVisibleContent(p)).Select(p => new CarouselPage(p)).ToList();
+        }
+    }
+
+    // ----- Page de veille : voir BuilderConfig.WidgetIdle* pour le déclenchement/minutage global. Depuis v1.34.6,
+    // QUELLES pages y participent se choisit par page (ShowInIdle) plutôt qu'une seule désignée globalement.
+    // v1.34.12, clarifié après plusieurs allers-retours : TOUS les espaces marqués "Actif sur le widget" (voir
+    // WidgetWorkspace.Active, un choix MULTIPLE) contribuent leurs pages de veille ici, que ce soit ou non l'espace
+    // actuellement AFFICHÉ (ActiveWorkspace, lui un choix exclusif — voir Carousel ci-dessus, qui lui reste limité à
+    // l'unique espace affiché). "Actif" veut donc dire deux choses à la fois : proposé dans le sélecteur du widget
+    // ET contributeur de veille — un seul réglage, pas deux séparés (v1.34.9/v1.34.11 avaient un second interrupteur
+    // "ActiveForIdle" distinct, retiré : ça ne correspondait pas à ce qui était demandé). -----
+
+    private List<WidgetPageEntry> IdleCarousel =>
+        Config.Current.WidgetWorkspaces.Where(w => w.Active).SelectMany(w => w.Pages)
+            .Where(p => p.ShowInIdle && PageHasVisibleContent(p)).ToList();
+
+    private void OnWidgetMouseEnter()
+    {
+        _idleTimer?.Dispose();
+        _idleTimer = null;
+        _idleRotateTimer?.Dispose();
+        _idleRotateTimer = null;
+        if (_isIdle) { _isIdle = false; _idleCarouselIndex = 0; StateHasChanged(); }
+    }
+
+    /// <summary>Alterne entre les pages de veille (v1.34.6) quand il y en a plusieurs — démarré une fois la veille déclenchée, jamais pendant l'affichage normal.</summary>
+    private void StartIdleRotation()
+    {
+        _idleRotateTimer?.Dispose();
+        _idleRotateTimer = null;
+        if (IdleCarousel.Count <= 1) return;
+        var interval = TimeSpan.FromSeconds(Math.Max(2, Config.Current.WidgetIdleRotateSeconds));
+        _idleRotateTimer = new Timer(_ => InvokeAsync(() =>
+        {
+            var count = IdleCarousel.Count;
+            _idleCarouselIndex = count == 0 ? 0 : (_idleCarouselIndex + 1) % count;
+            StateHasChanged();
+        }), null, interval, interval);
+    }
+
+    private void OnWidgetMouseLeave()
+    {
+        _idleTimer?.Dispose();
+        _idleTimer = null;
+        if (!Config.Current.WidgetIdleEnabled || IdleCarousel.Count == 0) return;
+        ArmIdleTimer();
+    }
+
+    /// <summary>Une bulle du widget est ouverte (filtre courrier, notifications, sélecteur d'espace, détail de tâche).</summary>
+    private bool AnyWidgetPopupOpen => _showMailFilterMenu || _showNotifications || _showWorkspacePicker || _todoDetailTodo is not null || _calendarDetailEntry is not null || _pickerPin is not null || WidgetTimer.Current is { Pending: true };
+
+    /// <summary>
+    /// v1.34.10 : la veille se déclenchait même avec une bulle ouverte, puis fermait tout d'un coup par-dessus —
+    /// "tout buggé" (remonté avec capture d'écran). v1.34.12, correctif plus juste : tant qu'une bulle reste ouverte
+    /// (voir <see cref="AnyWidgetPopupOpen"/>), la veille ne se déclenche PAS du tout — le délai est simplement
+    /// reporté (revérifié après le même délai) plutôt que de couper l'utilisateur en pleine consultation.
+    /// </summary>
+    private void ArmIdleTimer()
+    {
+        _idleTimer?.Dispose();
+        var delay = TimeSpan.FromSeconds(Math.Max(1, Config.Current.WidgetIdleDelaySeconds));
+        _idleTimer = new Timer(_ => InvokeAsync(() =>
+        {
+            if (AnyWidgetPopupOpen) { ArmIdleTimer(); return; }
+            _isIdle = true;
+            _idleCarouselIndex = 0;
+            StartIdleRotation();
+            StateHasChanged();
+        }), null, delay, Timeout.InfiniteTimeSpan);
+    }
+
+    // ----- Bloc "weather" (v1.34.5) : relevé tenu à jour toutes les 10 minutes (même durée que le cache de
+    // WeatherService, pas la peine d'interroger plus souvent) pour tous les blocs météo de l'espace actif. -----
+
+    private readonly Dictionary<string, WeatherResult> _weatherByBlock = new();
+
+    private WeatherResult? WeatherFor(WidgetPageBlock block) => _weatherByBlock.TryGetValue(block.Id, out var w) ? w : null;
+
+    private async Task RefreshWeatherBlocks()
+    {
+        var blocks = Config.Current.WidgetWorkspaces
+            .SelectMany(w => w.Pages).SelectMany(p => p.Blocks)
+            .Where(b => b.Type == "weather" && !string.IsNullOrWhiteSpace(b.WeatherLocationName))
+            .ToList();
+        if (blocks.Count == 0) return;
+        foreach (var b in blocks)
+        {
+            try { _weatherByBlock[b.Id] = await Weather.GetCurrentAsync(b.WeatherLat, b.WeatherLon); }
+            catch (Exception ex) { _weatherByBlock[b.Id] = new WeatherResult { Error = ex.Message }; }
+        }
+        StateHasChanged();
+    }
+
+    private RenderFragment RenderWeatherBlock(WidgetPageBlock block)
+    {
+        // Valeurs calculées AVANT le template (plutôt que des "var ..." au milieu de @if imbriqués dans un template
+        // Razor en ligne) : forme plus sûre pour le compilateur Razor, un seul niveau de @if dans le balisage.
+        var hasLocation = !string.IsNullOrWhiteSpace(block.WeatherLocationName);
+        var w = hasLocation ? WeatherFor(block) : null;
+        var icon = w is { Success: true } ? WeatherService.Describe(w.WeatherCode, w.IsDay).Icon : "";
+        var desc = w is { Success: true } ? WeatherService.Describe(w.WeatherCode, w.IsDay).Description : "";
+        return @<div class="widget-weather">
+            @if (!hasLocation)
+            {
+                <p class="widget-hint">Configure une région pour ce bloc dans les Réglages du widget.</p>
+            }
+            else if (w is null)
+            {
+                <p class="widget-hint"><i class="fa-solid fa-spinner fa-spin"></i> Chargement…</p>
+            }
+            else if (!w.Success)
+            {
+                <p class="widget-mail-error"><i class="fa-solid fa-triangle-exclamation"></i> @(w.Error ?? "Météo indisponible.")</p>
+            }
+            else
+            {
+                <div class="widget-weather-main">
+                    <i class="fa-solid @icon widget-weather-icon"></i>
+                    <div class="widget-weather-lines">
+                        <span class="widget-weather-temp">@Math.Round(w.TemperatureC) °C</span>
+                        <span class="widget-weather-desc">@desc</span>
+                        <span class="widget-weather-place">@block.WeatherLocationName</span>
+                    </div>
+                </div>
+            }
+        </div>;
+    }
+
+    // ----- Bloc "worldclock" (v1.34.5) : l'heure vient de TimeZoneInfo (fuseau choisi dans les Réglages), pas d'un
+    // service réseau — toujours disponible hors ligne. La "vue de la planète" reste volontairement simple (une icône
+    // de globe plutôt qu'un repère positionné avec précision) : positionner un point exact demanderait des coordonnées
+    // fiables pour chaque fuseau, pas juste celui choisi par l'utilisateur. -----
+
+    private DateTime? WorldClockTimeFor(WidgetPageBlock block)
+    {
+        if (string.IsNullOrWhiteSpace(block.WorldClockTimeZoneId)) return null;
+        try
+        {
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(block.WorldClockTimeZoneId);
+            return TimeZoneInfo.ConvertTime(_now, tz);
+        }
+        catch (Exception) { return null; }
+    }
+
+    private RenderFragment RenderWorldClockBlock(WidgetPageBlock block)
+    {
+        var hasTimeZone = !string.IsNullOrWhiteSpace(block.WorldClockTimeZoneId);
+        var wc = hasTimeZone ? WorldClockTimeFor(block) : null;
+        var label = string.IsNullOrWhiteSpace(block.WorldClockLabel) ? block.WorldClockTimeZoneId : block.WorldClockLabel;
+        return @<div class="widget-worldclock">
+            @if (!hasTimeZone)
+            {
+                <p class="widget-hint">Configure un fuseau horaire pour ce bloc dans les Réglages du widget.</p>
+            }
+            else if (wc is null)
+            {
+                <p class="widget-mail-error"><i class="fa-solid fa-triangle-exclamation"></i> Fuseau horaire introuvable.</p>
+            }
+            else
+            {
+                <div class="widget-worldclock-globe"><i class="fa-solid fa-earth-americas"></i></div>
+                <div class="widget-worldclock-lines">
+                    <span class="widget-worldclock-time">@wc.Value.ToString("HH:mm")</span>
+                    <span class="widget-worldclock-label">@label</span>
+                </div>
+            }
+        </div>;
+    }
+
+    private static string TodoLevelClass(TodoLevel level) => level switch
+    {
+        TodoLevel.Urgent => "level-urgent",
+        TodoLevel.Important => "level-important",
+        _ => ""
+    };
+
+    /// <summary>v1.34.8 : la liste référencée par le bloc (voir <see cref="WidgetPageBlock.TodoListId"/>), ou null tant qu'aucune n'a été choisie.</summary>
+    private TodoListInfo? TodoListFor(WidgetPageBlock block) =>
+        Config.Current.TodoLists.FirstOrDefault(l => l.Id == block.TodoListId);
+
+    /// <summary>
+    /// Bloc "todo" (v1.34.6, détails/couleur/rappels en v1.34.7 ; v1.34.8 : les tâches viennent de la bibliothèque,
+    /// voir <see cref="TodoListFor"/>, plus du bloc directement — permet à la même liste d'être choisie sur plusieurs
+    /// pages à la fois, toujours synchronisée). Case à cocher (clic = fait/pas fait, comme une vraie liste de
+    /// tâches) ; cliquer sur le TEXTE ouvre les détails (description, échéance, rappel — voir
+    /// <see cref="OpenTodoDetail"/>) plutôt que de cocher, pour pouvoir consulter une tâche sans la valider par
+    /// erreur. Les tâches faites restent affichées mais barrées/atténuées plutôt que disparaître. Couleur de gauche
+    /// selon le niveau (<see cref="TodoItem.Level"/>) ; échéance dépassée et pas encore faite en rouge
+    /// (<c>is-overdue</c>) ; rappel déjà envoyé mais pas encore dépassée en orange (<c>is-upcoming</c>).
+    /// </summary>
+    private RenderFragment RenderTodoBlock(WidgetPageBlock block, bool interactive) => @<div class="widget-todo">
+        @{ var list = TodoListFor(block); var visibleTodos = list?.Items.Where(t => !t.Hidden).ToList(); }
+        @if (list is null)
+        {
+            <p class="widget-hint">Aucune liste choisie — choisis-en une dans les Réglages du widget.</p>
+        }
+        else if (visibleTodos!.Count == 0)
+        {
+            <p class="widget-hint">
+                @(list.Items.Count == 0 ? "Aucune tâche — ajoute-en dans l'onglet « Tâches »." : "Toutes les tâches de cette liste ont été retirées — réactive-les dans les Réglages du widget.")
+            </p>
+        }
+        else
+        {
+            @foreach (var todo in visibleTodos!.OrderBy(t => t.Done).ThenBy(t => t.DueAt ?? DateTime.MaxValue))
+            {
+                var overdue = !todo.Done && todo.DueAt is { } due && due < DateTime.Now;
+                var upcoming = !overdue && !todo.Done && todo.LastNotifiedForDueAt is not null && todo.LastNotifiedForDueAt == todo.DueAt;
+                <div class="widget-todo-item @(todo.Done ? "is-done" : "") @(overdue ? "is-overdue" : "") @(upcoming ? "is-upcoming" : "") @TodoLevelClass(todo.Level)">
+                    <i class="fa-solid @(todo.Done ? "fa-square-check" : "fa-square") widget-todo-check" @onclick="() => { if (interactive) ToggleTodo(list, todo); }" @onclick:stopPropagation="true"></i>
+                    <div class="widget-todo-lines" @onclick="() => { if (interactive) OpenTodoDetail(list, todo); }">
+                        <span class="widget-todo-text">@todo.Text</span>
+                        @if (todo.DueAt is { } d)
+                        {
+                            <span class="widget-todo-due">@d.ToString("dd.MM HH:mm")</span>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(todo.Description) && interactive)
+                    {
+                        <i class="fa-solid fa-circle-info widget-todo-info" @onclick="() => OpenTodoDetail(list, todo)" @onclick:stopPropagation="true" title="Voir les détails"></i>
+                    }
+                </div>
+            }
+        }
+    </div>;
+
+    /// <summary>Le jour affiché par un bloc « Calendrier » du widget (v1.37.2, demandé explicitement : "dans widget
+    /// on doit pouvoir parametré affiché tache du jour, dun jour particulié, lendemain, hier, jour en avant etc"),
+    /// réglé par bloc depuis WidgetConfigPanel.razor (voir <see cref="WidgetPageBlock.CalendarDayMode"/>).</summary>
+    private static DateOnly CalendarBlockDate(WidgetPageBlock block) => block.CalendarDayMode switch
+    {
+        "offset" => DateOnly.FromDateTime(DateTime.Today).AddDays(block.CalendarDayOffset),
+        "specific" => block.CalendarSpecificDate ?? DateOnly.FromDateTime(DateTime.Today),
+        _ => DateOnly.FromDateTime(DateTime.Today)
+    };
+
+    private static string CalendarTimeLabel(TimeSpan t) => $"{(int)t.TotalHours:D2}:{t.Minutes:D2}";
+
+    private static string CalendarBlockDateLabel(DateOnly date)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (date == today) return "Aujourd'hui";
+        if (date == today.AddDays(1)) return "Demain";
+        if (date == today.AddDays(-1)) return "Hier";
+        return date.ToString("dddd d MMMM");
+    }
+
+    /// <summary>Une ligne de créneau réutilisée par les deux modes du bloc Calendrier (jour complet et focus) —
+    /// <paramref name="badge"/> ajoute une étiquette devant l'heure ("En cours", "Avant", "Après"…), vide = rien.</summary>
+    private RenderFragment RenderCalendarEntryItem(CalendarEntry entry, string badge) => @<div class="widget-todo-item" style="border-left:4px solid @entry.Color">
+        <div class="widget-todo-lines">
+            <span class="widget-todo-text">@entry.Label</span>
+            <span class="widget-todo-due">@(badge.Length > 0 ? badge + " · " : "")@CalendarTimeLabel(entry.Start) – @CalendarTimeLabel(entry.End)</span>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(entry.Description))
+        {
+            <i class="fa-solid fa-circle-info widget-todo-info" @onclick="() => OpenCalendarDetail(entry)" @onclick:stopPropagation="true" title="Voir les détails"></i>
+        }
+    </div>;
+
+    /// <summary>
+    /// v1.37, onglet « Calendrier » : contenu d'un bloc Calendrier — soit tout l'emploi du temps du jour configuré
+    /// (voir <see cref="CalendarBlockDate"/>), soit, en mode focus (v1.37.4, <see cref="WidgetPageBlock.CalendarFocusMode"/>,
+    /// demandé explicitement : "afficher uniquement... la tâche de l'heure du jour actuelle / celle d'avant et celle
+    /// d'après, actualisé en temps réel"), seulement 3 créneaux du jour ACTUEL centrés sur maintenant — recalculé à
+    /// chaque rafraîchissement du widget (déjà toutes les secondes, voir <c>_clockTimer</c>), donc "en temps réel"
+    /// sans minuteur dédié. La configuration elle-même (ajouter/éditer un créneau, une note) se fait dans la page
+    /// dédiée (voir bouton « Gérer »), comme pour un bloc « Liste de tâches ».
+    /// </summary>
+    private RenderFragment RenderCalendarBlock(WidgetPageBlock block) => @<div class="widget-todo">
+        @if (block.CalendarFocusMode)
+        {
+            var today = DateOnly.FromDateTime(DateTime.Today);
+            var now = DateTime.Now;
+            var todays = Config.Current.CalendarEntries
+                .Where(e => e.Recurring ? e.Day == today.DayOfWeek : e.Date == today)
+                .OrderBy(e => e.Start)
+                .ToList();
+            var currentEntry = todays.FirstOrDefault(e => now.TimeOfDay >= e.Start && now.TimeOfDay < e.End);
+            var previousEntry = todays.Where(e => e.End <= now.TimeOfDay).OrderByDescending(e => e.End).FirstOrDefault();
+            var nextEntry = todays.Where(e => e.Start > now.TimeOfDay).OrderBy(e => e.Start).FirstOrDefault();
+
+            @if (currentEntry is null && previousEntry is null && nextEntry is null)
+            {
+                <p class="widget-hint">Aucun créneau aujourd'hui — ajoute-en dans l'onglet « Calendrier ».</p>
+            }
+            else
+            {
+                @if (previousEntry is { } p) { @RenderCalendarEntryItem(p, "Avant") }
+                @if (currentEntry is { } c) { @RenderCalendarEntryItem(c, "En cours") }
+                else { <p class="widget-hint" style="margin:4px 0">Aucun créneau en cours.</p> }
+                @if (nextEntry is { } n) { @RenderCalendarEntryItem(n, "Après") }
+            }
+        }
+        else
+        {
+            var date = CalendarBlockDate(block);
+            var entries = Config.Current.CalendarEntries
+                .Where(e => e.Recurring ? e.Day == date.DayOfWeek : e.Date == date)
+                .OrderBy(e => e.Start)
+                .ToList();
+            var now = DateTime.Now;
+
+            <p class="settings-hint" style="margin:0 0 4px;text-transform:capitalize">@CalendarBlockDateLabel(date)</p>
+            @if (entries.Count == 0)
+            {
+                <p class="widget-hint">Aucun créneau ce jour-là — ajoute-en dans l'onglet « Calendrier ».</p>
+            }
+            else
+            {
+                @foreach (var entry in entries)
+                {
+                    var current = date == DateOnly.FromDateTime(now) && now.TimeOfDay >= entry.Start && now.TimeOfDay < entry.End;
+                    @RenderCalendarEntryItem(entry, current ? "En cours" : "")
+                }
+            }
+        }
+        @if (block.CalendarShowManageButton)
+        {
+            <button type="button" class="settings-btn settings-btn-sm" @onclick='() => Nav.NavigateTo("/calendar")'><i class="fa-solid fa-calendar-days"></i><span>Gérer le calendrier</span></button>
+        }
+    </div>;
+
+    // ----- Détails d'une tâche (v1.34.7) : popup en lecture consultée depuis le widget, sans repasser par les
+    // Réglages — juste la description, l'échéance et le rappel, pas d'édition (le texte/l'échéance se modifient
+    // toujours dans les Réglages du widget, comme le reste de la composition des pages). -----
+
+    private TodoListInfo? _todoDetailList;
+    private TodoItem? _todoDetailTodo;
+
+    private void OpenTodoDetail(TodoListInfo list, TodoItem todo)
+    {
+        _todoDetailList = list;
+        _todoDetailTodo = todo;
+    }
+
+    private void CloseTodoDetail()
+    {
+        _todoDetailList = null;
+        _todoDetailTodo = null;
+    }
+
+    /// <summary>v1.37.3, demandé explicitement ("un bouton I qui permet de voir la description comme pour les
+    /// todo") : même popup de détail que pour une tâche, en lecture seule, pour la description d'un créneau du
+    /// calendrier — l'édition reste dans l'onglet « Calendrier ».</summary>
+    private CalendarEntry? _calendarDetailEntry;
+
+    private void OpenCalendarDetail(CalendarEntry entry) => _calendarDetailEntry = entry;
+
+    private void CloseCalendarDetail() => _calendarDetailEntry = null;
+
+    private static string TodoNotifyRepeatLabel(TodoNotifyRepeat repeat) => repeat switch
+    {
+        TodoNotifyRepeat.Daily => "chaque jour",
+        TodoNotifyRepeat.Weekly => "chaque semaine",
+        TodoNotifyRepeat.Monthly => "chaque mois",
+        _ => "une seule fois"
+    };
+
+    private static string TodoNotifyTargetLabel(TodoNotifyTarget target) => target switch
+    {
+        TodoNotifyTarget.Windows => "notification Windows",
+        TodoNotifyTarget.Both => "widget + notification Windows",
+        _ => "dans le widget seulement"
+    };
+
+    /// <summary>
+    /// Coche/décoche une tâche directement depuis le widget (pas besoin de rouvrir les Réglages). Si la tâche est
+    /// récurrente (v1.34.7, <see cref="TodoNotifyRepeat"/>) et vient d'être cochée, elle n'est PAS gardée "faite" —
+    /// son échéance avance directement à l'occurrence suivante et elle redevient à faire, plutôt que de rester
+    /// cochée jusqu'à ce que l'utilisateur la décoche lui-même (l'esprit d'une tâche récurrente).
+    /// </summary>
+    private void ToggleTodo(TodoListInfo list, TodoItem todo) =>
+        Config.Update(c =>
+        {
+            var l = c.TodoLists.FirstOrDefault(x => x.Id == list.Id);
+            var t = l?.Items.FirstOrDefault(x => x.Id == todo.Id);
+            if (t is null) return;
+
+            var wasDone = t.Done;
+            if (!wasDone && t.DueAt is { } due && t.NotifyRepeat != TodoNotifyRepeat.None)
+            {
+                // Récurrente : avance directement à l'occurrence suivante plutôt que de rester cochée.
+                t.DueAt = t.NotifyRepeat switch
+                {
+                    TodoNotifyRepeat.Daily => due.AddDays(1),
+                    TodoNotifyRepeat.Weekly => due.AddDays(7),
+                    TodoNotifyRepeat.Monthly => due.AddMonths(1),
+                    _ => due
+                };
+                t.LastNotifiedForDueAt = null;
+                t.Done = false;
+            }
+            else
+            {
+                t.Done = !wasDone;
+            }
+        });
+
+    /// <summary>
+    /// v1.34.15, demandé explicitement : retire une tâche de l'affichage du widget sans la supprimer (voir
+    /// <see cref="TodoItem.Hidden"/>) — action rapide depuis le détail de la tâche. Ferme le détail juste après,
+    /// puisque la tâche vient de disparaître de la liste affichée.
+    /// </summary>
+    private void HideTodo(TodoListInfo list, TodoItem todo)
+    {
+        Config.Update(c =>
+        {
+            var t = c.TodoLists.FirstOrDefault(x => x.Id == list.Id)?.Items.FirstOrDefault(x => x.Id == todo.Id);
+            if (t is not null) t.Hidden = true;
+        });
+        CloseTodoDetail();
+    }
+
+    // ----- Rendu simplifié d'un bloc sur la page de veille (v1.34.5) : identique pour "clock"/"server"/"pins"/
+    // "weather"/"worldclock", mais "mail" n'affiche qu'un résumé (pas la liste ni les popups) — une page de veille
+    // n'a pas besoin d'être aussi interactive que l'affichage normal. -----
+
+    /// <summary>Résumé "X message(s), Y non lu(s)" pour un bloc mail sur la page de veille (v1.34.5) — pas la liste complète.</summary>
+    private string IdleMailSummary(WidgetPageBlock block)
+    {
+        var mailList = MailResultsFor(block);
+        var total = mailList.Where(a => a.Success).Sum(a => a.Messages.Count);
+        var unread = mailList.Where(a => a.Success).SelectMany(a => a.Messages).Count(m => m.IsUnread);
+        return $"{total} message(s), {unread} non lu(s)";
+    }
+
+    private RenderFragment RenderIdleBlock(WidgetPageBlock block) => @<div>
+        @if (block.Type == "clock")
+        {
+            <div class="widget-clock widget-clock-page">
+                <span class="widget-time">@_now.ToString("HH:mm:ss")</span>
+                <span class="widget-date">@Capitalize(_now.ToString("dddd d MMMM", _culture))</span>
+            </div>
+        }
+        else if (block.Type == "server")
+        {
+            @RenderServerControls(block.ShowServerPower, block.ShowServerRestart, block.ShowServerStopMacros)
+        }
+        else if (block.Type == "mail")
+        {
+            @* v1.34.10 : demandé explicitement — page normale complète (comme hors veille) au lieu du résumé, au
+               choix par bloc (voir WidgetPageBlock.IdleShowFullMail, réglage dans WidgetConfigPanel). *@
+            @if (block.IdleShowFullMail)
+            {
+                var mailList = MailResultsFor(block);
+                <div class="widget-mail widget-idle-mail widget-idle-mail-full">
+                    <div class="widget-mail-head"><span>@MailBlockTitle(block)</span></div>
+                    <div class="widget-mail-list">
+                        @if (mailList.Count == 0)
+                        {
+                            <p class="widget-hint">@MailEmptyHint</p>
+                        }
+                        else
+                        {
+                            @foreach (var acc in mailList)
+                            {
+                                @if (!acc.Success)
+                                {
+                                    <p class="widget-mail-error"><i class="fa-solid fa-triangle-exclamation"></i> @acc.AccountName : @acc.Error</p>
+                                }
+                                else if (acc.Messages.Count == 0)
+                                {
+                                    <p class="widget-hint">@acc.AccountName : rien aujourd'hui.</p>
+                                }
+                                else
+                                {
+                                    @foreach (var m in acc.Messages)
+                                    {
+                                        <div class="widget-mail-item @(m.IsUnread ? "is-unread" : "")">
+                                            <span class="widget-mail-avatar">@MailInitial(m.From)</span>
+                                            <div class="widget-mail-lines">
+                                                <div class="widget-mail-row">
+                                                    <span class="widget-mail-from">@m.From</span>
+                                                    <span class="widget-mail-time">@FormatMailTime(m.Received)</span>
+                                                </div>
+                                                <span class="widget-mail-subject">@m.Subject</span>
+                                            </div>
+                                        </div>
+                                    }
+                                }
+                            }
+                        }
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="widget-mail widget-idle-mail">
+                    <span>@MailBlockTitle(block)</span>
+                    <span class="widget-hint">@IdleMailSummary(block)</span>
+                </div>
+            }
+        }
+        else if (block.Type == "pins")
+        {
+            <div class="widget-pins" style="--cols:@Math.Max(1, block.PinColumns)">
+                @foreach (var pin in PinsFor(block))
+                {
+                    <div class="widget-pin-slot @(pin.ImageOnly ? "pin-imageonly" : "")">
+                        <KeyTile Button="@PinDisplayButton(pin)" ShowLabel="@(!pin.ImageOnly)" Interactive="false" />
+                    </div>
+                }
+            </div>
+        }
+        else if (block.Type == "weather")
+        {
+            @RenderWeatherBlock(block)
+        }
+        else if (block.Type == "worldclock")
+        {
+            @RenderWorldClockBlock(block)
+        }
+        else if (block.Type == "todo")
+        {
+            @RenderTodoBlock(block, false)
+        }
+        else if (block.Type == "calendar")
+        {
+            @RenderCalendarBlock(block)
+        }
+    </div>;
+
+    private void ChangePage(int delta) => GoToPage(_carouselIndex + delta);
+
+    private void GoToPage(int page)
+    {
+        var count = Carousel.Count;
+        _carouselIndex = count == 0 ? 0 : Math.Clamp(page, 0, count - 1);
+        StateHasChanged();
+    }
+
+    private void ToggleWorkspacePicker() => _showWorkspacePicker = !_showWorkspacePicker;
+
+    /// <summary>v1.34.12 : choisit l'espace AFFICHÉ (carrousel normal), exclusif — parmi les espaces "Actif sur le
+    /// widget" uniquement (voir le filtre dans le sélecteur ci-dessus). "Actif" lui-même reste un choix multiple,
+    /// réglable dans les Réglages (WidgetConfigPanel), sans lien direct avec CE choix d'affichage précis.</summary>
+    private void SelectWorkspace(WidgetWorkspace ws)
+    {
+        _showWorkspacePicker = false;
+        _carouselIndex = 0;
+        Config.Update(c => c.ActiveWidgetWorkspaceId = ws.Id);
+    }
+
+    private string CustomColorStyle => Config.Current.WidgetVariant == "custom"
+        ? $"background:{Config.Current.WidgetCustomBackground};color:{Config.Current.WidgetCustomForeground};--widget-solid-bg:{Config.Current.WidgetCustomBackground};"
+        : "";
+
+    private string CustomFontDataUri => Config.Current.WidgetFont == "custom" ? FontResolver.Resolve(Config.Current.WidgetCustomFontPath) : "";
+
+    private string CustomFontStyle => Config.Current.WidgetFont == "custom" && CustomFontDataUri.Length > 0
+        ? "font-family:'sdbWidgetCustomFont';"
+        : "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _clockTimer = new Timer(_ => InvokeAsync(() => { _now = DateTime.Now; StateHasChanged(); }), null, 0, 1000);
+        _statusTimer = new Timer(_ => InvokeAsync(RefreshStatus), null, 0, 5000);
+        // Départ à 0 (comme les deux minuteurs ci-dessus) : rattrape tout envoi programmé arrivé à échéance pendant que
+        // le widget était fermé, dès sa prochaine ouverture, plutôt que d'attendre la première minute écoulée.
+        _scheduledEmailTimer = new Timer(_ => InvokeAsync(CheckScheduledEmails), null, 0, 60_000);
+        // Rappels de tâches (v1.34.7) : même rythme (60 s) que les envois programmés, pour la même raison — départ à
+        // 0 pour rattraper tout de suite un rappel arrivé à échéance pendant que le widget était fermé.
+        _todoNotifyTimer = new Timer(_ => InvokeAsync(CheckTodoNotifications), null, 0, 60_000);
+        // Rappels du calendrier (v1.37, routines/créneaux/réveils de jour) : depuis v1.37.4, CalendarService possède
+        // son propre minuteur et tourne tant que l'app est ouverte, même quand ce widget est fermé (voir
+        // CalendarService et MauiProgram.CreateMauiApp) — plus besoin de le relancer ici à l'ouverture du widget.
+        // Départ à 0 aussi : affiche la météo dès l'ouverture plutôt que d'attendre 10 minutes ; ensuite tenue à jour
+        // au même rythme que le cache de WeatherService (pas la peine d'interroger plus souvent).
+        _weatherTimer = new Timer(_ => InvokeAsync(RefreshWeatherBlocks), null, 0, (int)TimeSpan.FromMinutes(10).TotalMilliseconds);
+        // Réagit tout de suite à un changement de réglages (touches épinglées ajoutées/modifiées/masquées, style du
+        // widget, espace de travail actif, affichage de l'horloge/des contrôles/du courrier…) fait depuis la fenêtre
+        // principale, plutôt que d'attendre le prochain battement de l'horloge (jusqu'à 1s) — évite d'avoir à
+        // fermer/rouvrir le widget.
+        Config.Changed += OnConfigChanged;
+        WidgetTimer.Changed += OnWidgetTimerChanged;
+        await RefreshStatus();
+
+        if (Config.Current.MailAccounts.Any(a => a.Enabled))
+        {
+            _ = RefreshMail();
+            StartMailTimer();
+        }
+
+        SyncVoiceListener();
+    }
+
+    private void StartMailTimer()
+    {
+        _mailTimer?.Dispose();
+        _mailIntervalMinutes = Math.Max(1, Config.Current.WidgetMailRefreshMinutes);
+        var interval = TimeSpan.FromMinutes(_mailIntervalMinutes);
+        // Périodique : le widget interroge les boîtes mail tout seul à cette fréquence, sans jamais avoir besoin
+        // d'être fermé/rouvert — le bouton d'actualisation ne sert qu'à forcer une vérification immédiate.
+        _mailTimer = new Timer(_ => InvokeAsync(RefreshMail), null, interval, interval);
+    }
+
+    private void OnConfigChanged()
+    {
+        var mailEnabled = Config.Current.MailAccounts.Any(a => a.Enabled);
+        if (mailEnabled)
+        {
+            if (_mailTimer is null || Math.Max(1, Config.Current.WidgetMailRefreshMinutes) != _mailIntervalMinutes)
+                StartMailTimer();
+        }
+        else if (_mailTimer is not null)
+        {
+            _mailTimer.Dispose();
+            _mailTimer = null;
+        }
+
+        SyncVoiceListener();
+        InvokeAsync(StateHasChanged);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dragRef = DotNetObjectReference.Create(this);
+            try { await JS.InvokeVoidAsync("sdbWidgetDrag.start", _dragRef, "widget-dragbar"); }
+            catch (Exception) { /* le widget reste utilisable, juste sans glissement par la poignée */ }
+        }
+    }
+
+    /// <summary>
+    /// Appelé depuis widgetDrag.js au tout début d'un glissement (mousedown sur la poignée). Un essai de mécanisme
+    /// natif direct (WM_NCHITTEST, sans passer par ici) a cassé tout glissement sur un vrai Windows et a été retiré —
+    /// voir la remarque de classe de WindowsWidgetHost. Ce mécanisme JS -> .NET reste donc le seul en place, avec son
+    /// défaut connu (relâcher le clic pour que le glissement démarre).
+    /// </summary>
+    [JSInvokable]
+    public void OnWidgetDragStart() => WidgetHost.BeginDrag();
+
+    private async Task RefreshStatus()
+    {
+        if (!Store.HasServerFolder) return;
+        try { _status = await Restarter.GetStatusAsync(); }
+        catch (Exception) { /* affichage au mieux : une erreur passagère n'a pas besoin d'être montrée ici */ }
+        StateHasChanged();
+    }
+
+    private async Task RefreshMail()
+    {
+        if (_mailLoading) return;
+        _mailLoading = true;
+        StateHasChanged();
+        try
+        {
+            var results = await Mail.FetchAsync(_mailFilter);
+            // La détection de "nouveaux messages" ne fait sens que pour la vue "période" — sur Favoris/Archivés, la
+            // liste ne reflète pas l'arrivée de courrier et comparer à _seenMailUids déclencherait de fausses
+            // notifications (et corromprait le suivi pour la prochaine fois qu'on revient sur "période").
+            if (_mailFilter.Scope == MailViewScope.Period) DetectNewMail(results);
+            _mailResults = results;
+            RegisterKnownContacts(results);
+        }
+        catch (Exception) { /* chaque compte gère déjà ses propres erreurs ; ici, au pire, la liste reste inchangée */ }
+        finally
+        {
+            _mailLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Alimente l'autocomplétion du champ "À" (v1.34.5, voir le &lt;datalist&gt; en haut de ce fichier) avec
+    /// les expéditeurs vus dans le courrier reçu — pas de liste de contacts séparée à gérer, juste ce qui a déjà été
+    /// vu, comme la plupart des clients mail. En mémoire seulement, reparti de zéro à chaque lancement du widget.</summary>
+    private void RegisterKnownContacts(List<MailAccountResult> results)
+    {
+        foreach (var acc in results)
+        {
+            if (!acc.Success) continue;
+            foreach (var m in acc.Messages)
+            {
+                var address = m.FromAddress;
+                if (string.IsNullOrWhiteSpace(address)) continue;
+                _knownContacts[address] = string.IsNullOrWhiteSpace(m.From) ? address : m.From;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Compare les messages reçus à ceux déjà vus lors du dernier passage pour repérer les nouveaux — sans état
+    /// persisté (juste en mémoire pour la durée de vie du widget), donc rien n'est notifié au tout premier
+    /// chargement (sinon tout le courrier du jour serait "nouveau" à chaque ouverture du widget).
+    /// </summary>
+    private void DetectNewMail(List<MailAccountResult> results)
+    {
+        var currentIds = new HashSet<(string, uint)>();
+        var newOnes = new List<MailSummary>();
+        foreach (var acc in results)
+        {
+            if (!acc.Success) continue;
+            foreach (var m in acc.Messages)
+            {
+                var key = (m.AccountId, m.Uid);
+                currentIds.Add(key);
+                if (_mailFirstLoadDone && !_seenMailUids.Contains(key)) newOnes.Add(m);
+            }
+        }
+        _seenMailUids = currentIds;
+        _mailFirstLoadDone = true;
+
+        try
+        {
+            if (newOnes.Count == 1)
+            {
+                var m = newOnes[0];
+                WidgetHost.NotifyNewMail(m.AccountName, $"{m.From} — {m.Subject}");
+            }
+            else if (newOnes.Count > 1)
+            {
+                WidgetHost.NotifyNewMail("Nouveaux messages", $"{newOnes.Count} nouveaux messages reçus.");
+            }
+        }
+        catch (Exception) { /* une notification manquée n'a rien de grave : le message reste visible dans le widget */ }
+    }
+
+    private async Task OpenMail(MailSummary m)
+    {
+        _openMail = m;
+        _mailViewMode = MailViewMode.Formatted;
+        _openMailLoading = true;
+        _openMailError = null;
+        _openMailText = null;
+        _openMailHtml = null;
+        _openMailMessageId = null;
+        _replyText = "";
+        _replyError = null;
+        _replySent = false;
+        _replyAttachments = new();
+        _replySignatureOn = Config.Current.MailAccounts.FirstOrDefault(a => a.Id == m.AccountId) is { } racc && racc.SignatureEnabled && racc.HasSignature;
+        StateHasChanged();
+        try
+        {
+            var result = await Mail.FetchBodyAsync(m.AccountId, m.Uid);
+            if (result.Success) { _openMailText = result.Text; _openMailHtml = result.Html; _openMailMessageId = result.MessageId; }
+            else _openMailError = result.Error ?? "Message introuvable.";
+        }
+        catch (Exception ex) { _openMailError = ex.Message; }
+        finally
+        {
+            _openMailLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseMail()
+    {
+        _openMail = null;
+        _mailViewMode = MailViewMode.Formatted;
+        _openMailError = null;
+        _openMailText = null;
+        _openMailHtml = null;
+        _openMailMessageId = null;
+        _replyText = "";
+        _replyError = null;
+        _replySent = false;
+        _replyAttachments = new();
+    }
+
+    private bool CanReplyToOpenMail => _openMail is not null && Config.Current.MailAccounts.FirstOrDefault(a => a.Id == _openMail.AccountId)?.SmtpEnabled == true;
+
+    /// <summary>Depuis "Mise en forme" (écran d'accueil du message, v1.34.0) : bascule sur le texte brut, sans citations repliées.</summary>
+    private void ShowDetail() => _mailViewMode = MailViewMode.Detail;
+
+    private void ShowReplyMode()
+    {
+        if (!CanReplyToOpenMail) return;
+        _mailViewMode = MailViewMode.Reply;
+        _replyError = null;
+    }
+
+    /// <summary>Retour à l'écran "Mise en forme" (l'accueil du message, v1.34.0) depuis "Détails" ou "Répondre" — annule une réponse en cours sans l'envoyer (le texte déjà tapé est perdu, comme fermer une fenêtre de composition).</summary>
+    private void BackToFormatted()
+    {
+        _mailViewMode = MailViewMode.Formatted;
+        _replyError = null;
+    }
+
+    private async Task AddReplyAttachment()
+    {
+        string? path;
+        try { path = await Picker.PickFileAsync(null); }
+        catch (Exception) { return; }
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            var bytes = await File.ReadAllBytesAsync(path);
+            _replyAttachments.Add(new MailAttachmentData { FileName = Path.GetFileName(path), Bytes = bytes, ContentType = GuessContentType(path) });
+        }
+        catch (Exception ex) { _replyError = $"Impossible de lire ce fichier : {ex.Message}"; }
+        StateHasChanged();
+    }
+
+    private void RemoveReplyAttachment(MailAttachmentData att) => _replyAttachments.Remove(att);
+
+    private async Task SendReply()
+    {
+        if (_openMail is null || string.IsNullOrWhiteSpace(_replyText)) return;
+        _replySending = true;
+        _replyError = null;
+        _replySent = false;
+        StateHasChanged();
+        try
+        {
+            var subject = _openMail.Subject.StartsWith("Re:", StringComparison.OrdinalIgnoreCase) ? _openMail.Subject : $"Re: {_openMail.Subject}";
+            var to = _openMail.FromAddress ?? _openMail.From;
+            var result = await Mail.SendReplyAsync(_openMail.AccountId, new List<string> { to }, subject, _replyText, _openMailMessageId,
+                includeSignature: _replySignatureOn, attachments: _replyAttachments);
+            if (result.Success) { _replySent = true; _replyText = ""; _replyAttachments = new(); }
+            else _replyError = result.Error;
+        }
+        catch (Exception ex) { _replyError = ex.Message; }
+        finally
+        {
+            _replySending = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleFavorite(MailSummary m)
+    {
+        try
+        {
+            var result = await Mail.SetFavoriteAsync(m.AccountId, m.Uid, !m.IsFavorite);
+            if (result.Success) ReplaceMailInResults(m with { IsFavorite = !m.IsFavorite });
+            else _message = result.Error;
+        }
+        catch (Exception ex) { _message = ex.Message; }
+        StateHasChanged();
+    }
+
+    private async Task ToggleArchived(MailSummary m)
+    {
+        try
+        {
+            var archiving = !m.IsArchived;
+            var result = await Mail.SetArchivedAsync(m.AccountId, m.Uid, archiving);
+            if (result.Success)
+            {
+                // La vue "période" exclut les messages archivés, et la vue "archivés" ne montre que ceux-là : dans les
+                // deux cas, (dés)archiver fait sortir le message de la liste actuelle plutôt que de simplement mettre
+                // à jour son état affiché (contrairement au favori, qui reste visible partout).
+                if (_mailFilter.Scope is MailViewScope.Period or MailViewScope.Archived) RemoveMailFromResults(m);
+                else ReplaceMailInResults(m with { IsArchived = archiving });
+                if (_openMail is not null && _openMail.AccountId == m.AccountId && _openMail.Uid == m.Uid) CloseMail();
+            }
+            else _message = result.Error;
+        }
+        catch (Exception ex) { _message = ex.Message; }
+        StateHasChanged();
+    }
+
+    private async Task DeleteMailItem(MailSummary m)
+    {
+        try
+        {
+            var result = await Mail.DeleteAsync(m.AccountId, m.Uid);
+            if (result.Success)
+            {
+                RemoveMailFromResults(m);
+                if (_openMail is not null && _openMail.AccountId == m.AccountId && _openMail.Uid == m.Uid) CloseMail();
+            }
+            else _message = result.Error;
+        }
+        catch (Exception ex) { _message = ex.Message; }
+        StateHasChanged();
+    }
+
+    private void ReplaceMailInResults(MailSummary updated)
+    {
+        var acc = _mailResults.FirstOrDefault(r => r.AccountId == updated.AccountId);
+        if (acc is null) return;
+        var idx = acc.Messages.FindIndex(x => x.Uid == updated.Uid);
+        if (idx >= 0) acc.Messages[idx] = updated;
+        if (_openMail is not null && _openMail.AccountId == updated.AccountId && _openMail.Uid == updated.Uid) _openMail = updated;
+    }
+
+    private void RemoveMailFromResults(MailSummary m)
+    {
+        var acc = _mailResults.FirstOrDefault(r => r.AccountId == m.AccountId);
+        acc?.Messages.RemoveAll(x => x.Uid == m.Uid);
+    }
+
+    private static string MailInitial(string from)
+    {
+        var trimmed = from.Trim().Trim('"');
+        return trimmed.Length > 0 ? trimmed[0].ToString().ToUpperInvariant() : "?";
+    }
+
+    private static string FormatMailTime(DateTimeOffset t)
+    {
+        var local = t.LocalDateTime;
+        return local.Date == DateTime.Today ? local.ToString("HH:mm") : local.ToString("dd/MM HH:mm");
+    }
+
+    private async Task ToggleServer()
+    {
+        _busy = true;
+        _message = null;
+        StateHasChanged();
+        try
+        {
+            var result = _status?.Running == true ? await Restarter.StopAsync() : await Restarter.StartAsync();
+            _message = result.Message;
+        }
+        catch (Exception ex) { _message = ex.Message; }
+        finally { _busy = false; }
+        await RefreshStatus();
+    }
+
+    private async Task Restart()
+    {
+        _busy = true;
+        _message = null;
+        StateHasChanged();
+        try
+        {
+            var result = await Restarter.RestartAsync();
+            _message = result.Message;
+        }
+        catch (Exception ex) { _message = ex.Message; }
+        finally { _busy = false; }
+        await RefreshStatus();
+    }
+
+    private void StopMacros()
+    {
+        try
+        {
+            MacroControl.StopAllMacros();
+            _message = "Macros arrêtées.";
+        }
+        catch (Exception ex) { _message = ex.Message; }
+    }
+
+    private async Task RunPinned(string name)
+    {
+        if (_busyPins.Contains(name)) return;
+
+        var info = Store.List().FirstOrDefault(s => s.Id.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (info is null) { _message = $"« {name} » introuvable."; return; }
+        if (!info.Enabled) { _message = $"« {name} » est désactivé."; return; }
+
+        _busyPins.Add(name);
+        StateHasChanged();
+        try
+        {
+            var result = await Tester.RunAsync(info.Path);
+            _message = result.Started ? $"« {name} » lancé." : $"« {name} » n'a pas pu être lancé.";
+        }
+        catch (Exception ex) { _message = ex.Message; }
+        finally
+        {
+            _busyPins.Remove(name);
+            StateHasChanged();
+        }
+    }
+
+    // ----- Touche "choix multiple" (v1.35, "on doit pouvoir avoir les choix multiple sur le widget") : même popup
+    // partagé (ChoicePopup) que l'app téléphone — chaque choix lance son propre script, exécution locale comme une
+    // touche normale (RunPinned), pas de PC réseau à viser. -----
+
+    private WidgetPin? _pickerPin;
+
+    private Task HandlePinClick(WidgetPin pin)
+    {
+        // v1.36.1, "si on clique dessus ça arrête" : touche Minuteur dédiée — un deuxième clic sur LA MÊME touche,
+        // pendant que son minuteur tourne (décompte, chrono, ou alarme Pomodoro en train de sonner), l'arrête
+        // plutôt que d'en redémarrer un autre.
+        if (pin.Kind == "timer")
+        {
+            if (WidgetTimer.IsRunningFor(pin.Id)) WidgetTimer.Stop();
+            else WidgetTimer.Start(pin.Timer, pin.ScriptName, pin.Id);
+            return Task.CompletedTask;
+        }
+
+        // Minuteur EN PLUS d'une touche normale (ex. "gâteau") : même bascule, mais n'empêche pas l'action normale
+        // de la touche de se relancer (script/choix) — seul le minuteur lui-même bascule.
+        if (pin.AttachedTimer is { Phases.Count: > 0 })
+        {
+            if (WidgetTimer.IsRunningFor(pin.Id)) WidgetTimer.Stop();
+            else WidgetTimer.Start(pin.AttachedTimer, pin.ScriptName, pin.Id);
+        }
+
+        if (pin.Kind != "picker") return RunPinned(pin.ScriptName);
+        _pickerPin = pin;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private Task PickPinOption(ChoiceOption option)
+    {
+        _pickerPin = null;
+        return string.IsNullOrWhiteSpace(option.Script) ? Task.CompletedTask : RunPinned(option.Script);
+    }
+
+    private void ClosePinPicker() => _pickerPin = null;
+
+    // ----- Minuteur/chronomètre d'une touche (v1.36, v1.36.1 : affiché directement sur la touche, voir
+    // PinDisplayButton/PinStateOf — le popup ne garde que la demande de durée, Pending) -----
+
+    private int _pendingHours;
+    private int _pendingMinutes = 5;
+    private int _pendingSeconds;
+
+    private void OnWidgetTimerChanged() => InvokeAsync(StateHasChanged);
+
+    private void ConfirmWidgetTimer() => WidgetTimer.ConfirmPending(_pendingHours * 3600 + _pendingMinutes * 60 + _pendingSeconds);
+
+    private void StopWidgetTimer() => WidgetTimer.Stop();
+
+    /// <summary>Touche à afficher : inchangée, sauf la touche dont le minuteur tourne — son nom est remplacé par
+    /// le compte (ou "…" en attente de la durée).</summary>
+    private DeckButton PinDisplayButton(WidgetPin pin)
+    {
+        var button = pin.ToDeckButton();
+        if (WidgetTimer.Current is not { } state || !WidgetTimer.IsRunningFor(pin.Id)) return button;
+
+        button.Label = state.Pending ? "…" : TimerFormat.Label(state);
+        return button;
+    }
+
+    /// <summary>État visuel de la touche : celui réglé par RunPinned (is-busy pendant un script), sauf un minuteur
+    /// en cours, qui prend le dessus (pulsation dédiée, mais reste cliquable — voir KeyTile.css, .is-timer-running).</summary>
+    private string PinStateOf(WidgetPin pin) =>
+        WidgetTimer.IsRunningFor(pin.Id) ? "is-timer-running" : (_busyPins.Contains(pin.ScriptName) ? "is-busy" : "");
+
+    // ----- Commande vocale continue du PC (v1.35, "autorisation de trigger ces bouton par la voix depuis le pc") :
+    // démarrée/arrêtée selon BuilderConfig.WidgetVoice.Enabled (OnInitializedAsync/OnConfigChanged/Dispose),
+    // logique de reconnaissance DU TEXTE réutilisée en pur (VoiceMatcher.Normalize) plutôt que VoiceMatcher.Process
+    // lui-même, qui est typé pour DeckButton/VoiceSettings côté téléphone — WidgetPin est un modèle à part. -----
+
+    private DateTime _voiceAwakeUntil = DateTime.MinValue;
+
+    private void SyncVoiceListener()
+    {
+        var shouldListen = Config.Current.WidgetVoice.Enabled;
+        if (shouldListen && !VoiceListener.Listening) VoiceListener.Start(text => InvokeAsync(() => OnVoiceUtterance(text)));
+        else if (!shouldListen && VoiceListener.Listening) VoiceListener.Stop();
+    }
+
+    private void OnVoiceUtterance(string text)
+    {
+        var cfg = Config.Current;
+        if (!cfg.WidgetVoice.Enabled) return;
+
+        var normalized = VoiceMatcher.Normalize(text);
+        var wake = VoiceMatcher.Normalize(cfg.WidgetVoice.WakeWord);
+        var isAwake = DateTime.Now < _voiceAwakeUntil;
+
+        if (!string.IsNullOrWhiteSpace(wake) && normalized.Contains(wake, StringComparison.Ordinal))
+        {
+            _voiceAwakeUntil = DateTime.Now.AddSeconds(Math.Max(1, cfg.WidgetVoice.AwakeSeconds));
+            isAwake = true;
+            var idx = normalized.IndexOf(wake, StringComparison.Ordinal);
+            normalized = normalized[(idx + wake.Length)..].Trim();
+            if (normalized.Length == 0) return; // juste le mot de réveil, rien d'autre à faire pour l'instant
+        }
+
+        var allPins = cfg.WidgetWorkspaces.SelectMany(w => w.Pages).SelectMany(p => p.Blocks)
+            .Where(b => b.Type == "pins").SelectMany(b => b.PinIds).Distinct()
+            .Select(id => cfg.WidgetPins.FirstOrDefault(p => p.Id == id))
+            .Where(p => p is not null).Select(p => p!);
+
+        foreach (var pin in allPins)
+        {
+            if (pin.VoiceRequiresWakeWord && !isAwake) continue;
+
+            if (pin.VoiceTriggers.Any(t => !string.IsNullOrWhiteSpace(t) && normalized.Contains(VoiceMatcher.Normalize(t), StringComparison.Ordinal)))
+            {
+                _ = HandlePinClick(pin);
+                return;
+            }
+
+            if (pin.Kind == "picker")
+            {
+                var option = pin.Options.FirstOrDefault(o => !string.IsNullOrWhiteSpace(o.Label) && normalized.Contains(VoiceMatcher.Normalize(o.Label), StringComparison.Ordinal));
+                if (option is not null) { _ = PickPinOption(option); return; }
+            }
+        }
+    }
+
+    private void ToggleAlwaysOnTop()
+    {
+        WidgetHost.SetAlwaysOnTop(!Config.Current.WidgetAlwaysOnTop);
+        StateHasChanged();
+    }
+
+    private static string Capitalize(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+    public void Dispose()
+    {
+        Config.Changed -= OnConfigChanged;
+        WidgetTimer.Changed -= OnWidgetTimerChanged;
+        VoiceListener.Stop();
+        _clockTimer?.Dispose();
+        _statusTimer?.Dispose();
+        _mailTimer?.Dispose();
+        _scheduledEmailTimer?.Dispose();
+        _todoNotifyTimer?.Dispose();
+        _weatherTimer?.Dispose();
+        _idleTimer?.Dispose();
+        _idleRotateTimer?.Dispose();
+        try { _ = JS.InvokeVoidAsync("sdbWidgetDrag.stop"); } catch (Exception) { /* la fenêtre se ferme de toute façon */ }
+        _dragRef?.Dispose();
+    }
+
+    // Statut + boutons du serveur, factorisés ici (template Razor -> RenderFragment) pour ne pas dupliquer le
+    // balisage — utilisé pour chaque page qui active ShowServerControls (v1.33.0 : plus qu'un seul appelant possible,
+    // depuis que la section "fixe" en en-tête a été retirée). showPower/showRestart/showStopMacros permettent
+    // d'afficher seulement certains boutons (v1.32.0) plutôt que toujours les trois.
+    private RenderFragment RenderServerControls(bool showPower, bool showRestart, bool showStopMacros) => @<div class="widget-server-controls">
+        @if (!Store.HasServerFolder)
+        {
+            <p class="widget-hint">Dossier du serveur non configuré.</p>
+        }
+        else if (_status is null)
+        {
+            <p class="widget-hint"><i class="fa-solid fa-spinner fa-spin"></i> …</p>
+        }
+        else
+        {
+            <div class="widget-status">
+                <span class="widget-dot @(_status.Running ? "is-on" : "is-off")"></span>
+                <span>Serveur @(_status.Running ? "actif" : "arrêté")</span>
+            </div>
+        }
+
+        <div class="widget-actions">
+            @if (showPower)
+            {
+                <button type="button" class="widget-btn" @onclick="ToggleServer" disabled="@(_busy || !Store.HasServerFolder)" title="@(_status?.Running == true ? "Éteindre le serveur" : "Rallumer le serveur")">
+                    <i class="fa-solid @(_status?.Running == true ? "fa-power-off" : "fa-play")"></i>
+                </button>
+            }
+            @if (showRestart)
+            {
+                <button type="button" class="widget-btn" @onclick="Restart" disabled="@(_busy || !Store.HasServerFolder)" title="Redémarrer le serveur">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+            }
+            @if (showStopMacros)
+            {
+                <button type="button" class="widget-btn" @onclick="StopMacros" disabled="@(_busy || !Store.HasServerFolder)" title="Arrêter toutes les macros en cours">
+                    <i class="fa-solid fa-hand"></i>
+                </button>
+            }
+        </div>
+    </div>;
+}

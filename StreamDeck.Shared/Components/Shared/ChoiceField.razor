@@ -1,0 +1,45 @@
+<div class="choicefield">
+    @if (!string.IsNullOrEmpty(Label))
+    {
+        <span class="choicefield-label">@Label</span>
+    }
+
+    <button type="button" class="choicefield-btn" @onclick="OpenPicker" disabled="@Disabled">
+        @if (!string.IsNullOrEmpty(CurrentItem?.Icon))
+        {
+            <span class="choicefield-icon"><i class="@CurrentItem!.Icon"></i></span>
+        }
+        <span class="choicefield-value">@CurrentText</span>
+        <i class="fa-solid fa-chevron-down choicefield-caret"></i>
+    </button>
+</div>
+
+<ChoicePicker Open="_open" Title="@PickerTitle" Icon="@PickerIcon" Items="Items" Current="Value" OnPick="Pick" OnClose="Close" />
+
+@code {
+    [Parameter] public string? Label { get; set; }
+
+    /// <summary>Titre de la modale (par défaut : le libellé).</summary>
+    [Parameter] public string? Title { get; set; }
+
+    [Parameter] public string? PickerIcon { get; set; }
+    [Parameter] public IReadOnlyList<ChoiceItem> Items { get; set; } = Array.Empty<ChoiceItem>();
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private bool _open;
+
+    private ChoiceItem? CurrentItem => Items.FirstOrDefault(i => i.Value == Value);
+    private string CurrentText => CurrentItem?.Title ?? "Choisir…";
+    private string PickerTitle => Title ?? Label ?? "Choisir";
+
+    private void OpenPicker() => _open = true;
+    private void Close() => _open = false;
+
+    private async Task Pick(string value)
+    {
+        _open = false;
+        await ValueChanged.InvokeAsync(value);
+    }
+}

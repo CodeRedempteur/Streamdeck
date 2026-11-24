@@ -1,0 +1,100 @@
+@inject IAppPlatform Platform
+
+@if (Platform.CanListen)
+{
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-microphone"></i></span>
+            <div>
+                <h2>Commande vocale</h2>
+                <p>L'appli écoute en continu et déclenche un bouton à la voix.</p>
+            </div>
+        </div>
+
+        <ToggleSwitch Label="Écoute activée" Description="Le micro reste ouvert en tâche de fond (demande la permission, et de désactiver l'optimisation de batterie pour rester fiable)."
+                      Value="State.Cfg.Voice.Enabled" ValueChanged="SetEnabled" />
+
+        @if (_permissionDenied)
+        {
+            <p class="settings-hint is-error"><i class="fa-solid fa-triangle-exclamation"></i> Permission du micro refusée : l'écoute ne peut pas démarrer. Accorde-la dans les réglages Android de l'application, puis réessaie.</p>
+        }
+
+        @if (State.Cfg.Voice.Enabled)
+        {
+            <label class="settings-field">
+                <span class="settings-label">Mot de réveil</span>
+                <span class="settings-input">
+                    <i class="fa-solid fa-comment-dots"></i>
+                    <input @bind="WakeWordValue" @bind:event="oninput" placeholder="ex : Cortana" autocomplete="off" spellcheck="false" />
+                </span>
+            </label>
+            <p class="settings-hint">
+                Dis ce mot pour ouvrir une courte écoute de commande (ex. « Cortana, lance Spotify » en une fois, ou
+                « Cortana » puis « lance Spotify » juste après). Un bouton peut aussi se régler pour réagir
+                <strong>sans</strong> le mot de réveil, à tout moment — pratique pour une commande qu'on veut
+                pouvoir dire n'importe quand.
+            </p>
+
+            <ChoiceField Label="Durée d'écoute après le mot de réveil" Items="AwakeChoices" Value="@AwakeValue" ValueChanged="SetAwake" PickerIcon="fa-solid fa-hourglass-half" />
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    private string WakeWordValue
+    {
+        get => State.Cfg.Voice.WakeWord;
+        set { State.Cfg.Voice.WakeWord = value; State.Notify(); }
+    }
+
+    private static readonly IReadOnlyList<ChoiceItem> AwakeChoices = new List<ChoiceItem>
+    {
+        new("3", "3 secondes"),
+        new("6", "6 secondes"),
+        new("10", "10 secondes"),
+        new("15", "15 secondes"),
+        new("30", "30 secondes")
+    };
+
+    private string AwakeValue
+    {
+        get
+        {
+            var seconds = State.Cfg.Voice.AwakeSeconds;
+            var closest = AwakeChoices.Select(c => int.Parse(c.Value)).OrderBy(v => Math.Abs(v - seconds)).First();
+            return closest.ToString();
+        }
+    }
+
+    private void SetAwake(string value)
+    {
+        if (int.TryParse(value, out var seconds)) State.Cfg.Voice.AwakeSeconds = seconds;
+        State.Notify();
+    }
+
+    private async Task SetEnabled(bool value)
+    {
+        if (value)
+        {
+            var granted = await Platform.SetVoiceListeningAsync(true);
+            if (!granted)
+            {
+                _permissionDenied = true;
+                State.Notify();
+                return;
+            }
+        }
+        else
+        {
+            await Platform.SetVoiceListeningAsync(false);
+        }
+
+        _permissionDenied = false;
+        State.Cfg.Voice.Enabled = value;
+        State.Notify();
+    }
+
+    private bool _permissionDenied;
+}

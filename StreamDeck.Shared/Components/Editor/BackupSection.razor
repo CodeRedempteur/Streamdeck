@@ -1,0 +1,147 @@
+@inject IJSRuntime JS
+
+<section class="settings-card">
+    <div class="settings-card-head">
+        <span class="settings-chip"><i class="fa-solid fa-clone"></i></span>
+        <div>
+            <h2>Copier la configuration</h2>
+            <p>Transfère tes boutons d'un appareil à l'autre par copier-coller.</p>
+        </div>
+    </div>
+
+    <h3 class="settings-subtitle">Exporter</h3>
+
+    <ToggleSwitch Label="Inclure les tokens" Description="Sinon ils sont retirés du texte : à ressaisir sur l'autre appareil. Le code PIN n'est jamais exporté."
+                  Value="_includeTokens" ValueChanged="SetIncludeTokens" />
+
+    <div class="settings-backup-actions">
+        <button type="button" class="settings-btn" @onclick="Export">
+            <i class="fa-solid fa-file-export"></i><span>Générer le texte</span>
+        </button>
+        @if (_exportText is not null)
+        {
+            <button type="button" class="settings-btn" @onclick="CopyAsync">
+                <i class="fa-solid fa-copy"></i><span>Copier</span>
+            </button>
+        }
+        @if (_copyMessage is not null)
+        {
+            <span class="settings-test-result @(_copyOk ? "is-ok" : "is-err")">
+                <i class="@(_copyOk ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_copyMessage</span>
+            </span>
+        }
+    </div>
+
+    @if (_exportText is not null)
+    {
+        <textarea class="settings-textarea" readonly rows="6" aria-label="Configuration exportée" @onfocus="SelectAll">@_exportText</textarea>
+    }
+
+    <h3 class="settings-subtitle">Importer</h3>
+
+    <textarea class="settings-textarea" rows="5" placeholder="Colle ici le texte exporté depuis un autre appareil"
+              aria-label="Configuration à importer" @bind="_importText" @bind:event="oninput"></textarea>
+
+    <ChoiceField Label="Mode d'import" Items="ModeChoices" Value="@ModeValue" ValueChanged="SetMode"
+                 PickerIcon="fa-solid fa-file-import" />
+    <p class="settings-hint">@ModeHint</p>
+
+    <div class="settings-backup-actions">
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="Import" disabled="@(string.IsNullOrWhiteSpace(_importText))">
+            <i class="fa-solid fa-file-import"></i><span>Importer</span>
+        </button>
+        @if (_importResult is not null)
+        {
+            <span class="settings-test-result @(_importResult.Ok ? "is-ok" : "is-err")">
+                <i class="@(_importResult.Ok ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_importResult.Message</span>
+            </span>
+        }
+    </div>
+</section>
+
+@code {
+    private static readonly IReadOnlyList<ChoiceItem> ModeChoices = new List<ChoiceItem>
+    {
+        new(ImportMode.Merge.ToString(), "Ajouter à ma configuration", "Les espaces importés s'ajoutent aux tiens", "fa-solid fa-layer-group"),
+        new(ImportMode.Replace.ToString(), "Tout remplacer", "Remplace les PC, espaces et réglages d'affichage", "fa-solid fa-arrows-rotate")
+    };
+
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    private bool _includeTokens;
+    private string? _exportText;
+    private string? _copyMessage;
+    private bool _copyOk;
+    private string _importText = string.Empty;
+    private ImportMode _mode = ImportMode.Merge;
+    private RunResult? _importResult;
+
+    private string ModeValue => _mode.ToString();
+
+    private string ModeHint => _mode == ImportMode.Merge
+        ? "Les PC déjà connus (même adresse) ne sont pas dupliqués."
+        : "Ton code PIN et les tokens déjà saisis sont conservés. Rien n'est appliqué tant que tu n'as pas enregistré.";
+
+    private void SetIncludeTokens(bool value)
+    {
+        _includeTokens = value;
+        _exportText = null;
+        _copyMessage = null;
+    }
+
+    private void SetMode(string value)
+    {
+        if (Enum.TryParse<ImportMode>(value, out var mode)) _mode = mode;
+    }
+
+    private void Export()
+    {
+        _exportText = ConfigTransfer.Export(State.Cfg, _includeTokens);
+        _copyMessage = null;
+    }
+
+    private async Task CopyAsync()
+    {
+        if (_exportText is null) return;
+
+        try
+        {
+            _copyOk = await JS.InvokeAsync<bool>("deck.copyText", _exportText);
+        }
+        catch (Exception)
+        {
+            _copyOk = false;
+        }
+
+        _copyMessage = _copyOk ? "Copié dans le presse-papiers" : "Copie impossible : sélectionne le texte et copie-le à la main";
+    }
+
+    private async Task SelectAll(FocusEventArgs _)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("deck.selectText", "textarea.settings-textarea[readonly]");
+        }
+        catch (Exception)
+        {
+            // Sélection automatique non disponible : sans gravité.
+        }
+    }
+
+    private void Import()
+    {
+        var imported = ConfigTransfer.Parse(_importText, out var error);
+        if (imported is null)
+        {
+            _importResult = new RunResult(false, error);
+            return;
+        }
+
+        var result = ConfigTransfer.Apply(State.Cfg, imported, _mode);
+        State.ResetSelection();
+        State.Notify();
+
+        _importText = string.Empty;
+        _importResult = new RunResult(result.Ok, result.Ok ? result.Message + " Pense à enregistrer." : result.Message);
+    }
+}

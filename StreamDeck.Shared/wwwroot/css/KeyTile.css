@@ -1,0 +1,126 @@
+/* KeyTile : tuile carrée d'un bouton. La taille vient de --size (définie par le parent). */
+
+.keytile {
+  --s: var(--tile-s, var(--size, 96px));
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--s) * .07);
+  width: 100%;
+  height: 100%;
+  padding: calc(var(--s) * .07);
+  border: 0;
+  border-radius: calc(var(--s) * .17);
+  color: var(--key-fg);
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, .24) 0%, rgba(255, 255, 255, 0) 46%, rgba(0, 0, 0, .24) 100%),
+    var(--key-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .30),
+    inset 0 0 0 1px rgba(255, 255, 255, .07),
+    0 16px 28px -14px var(--key-bg),
+    0 6px 14px -6px rgba(0, 0, 0, .65);
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .12s ease, filter .18s ease, box-shadow .2s ease;
+}
+
+.keytile:hover { filter: brightness(1.07); }
+.keytile:active { transform: scale(.96); }
+.keytile:focus-visible { outline: 3px solid var(--text); outline-offset: 3px; }
+
+.keytile-static { cursor: inherit; pointer-events: none; }
+
+.keytile-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  font-size: calc(var(--s) * .40 * var(--icon-scale, 1));
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .28));
+}
+
+.keytile-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: max(.78rem, calc(var(--s) * .095));
+  font-weight: 600;
+  letter-spacing: .01em;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* États */
+
+.keytile.is-busy {
+  filter: saturate(.55) brightness(.85);
+  pointer-events: none;
+  animation: keytile-pulse 1s ease-in-out infinite;
+}
+
+/* Enchaînement en cours : un appui l'interrompt. */
+.keytile.is-busy.is-cancellable { pointer-events: auto; cursor: pointer; }
+.keytile.is-busy.is-cancellable::after {
+  content: "Annuler";
+  position: absolute;
+  bottom: 7%;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .5);
+  color: #fff;
+  font-size: .7rem;
+  font-weight: 600;
+}
+
+/* v1.36.1, minuteur affiché directement sur sa touche ("le timer remplace le nom du bouton sur le bouton") :
+   pulsation comme .is-busy, mais SANS pointer-events:none (un clic doit pouvoir arrêter le minuteur). */
+.keytile.is-timer-running {
+  animation: keytile-pulse 1s ease-in-out infinite;
+}
+
+.keytile.is-ok::after,
+.keytile.is-warn::after,
+.keytile.is-err::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: calc(var(--s) * .12);
+  border: 3px solid var(--key-fg);
+  opacity: .9;
+}
+.keytile.is-err { animation: keytile-shake .35s; }
+.keytile.is-warn::after { border-style: dotted; }
+.keytile.is-err::after { border-style: dashed; }
+
+@keyframes keytile-pulse { 50% { opacity: .6; } }
+@keyframes keytile-shake { 25% { transform: translateX(-7px); } 75% { transform: translateX(7px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .keytile, .keytile.is-busy, .keytile.is-err { animation: none; transition: none; }
+}
+
+/* Image à la place de l'icône : toujours carrée (recadrée si besoin), quel que soit le format de la source. */
+.keytile-image {
+  width: calc(var(--s) * .52 * var(--icon-scale, 1));
+  height: calc(var(--s) * .52 * var(--icon-scale, 1));
+  object-fit: cover;
+  border-radius: calc(var(--s) * .12);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .35), inset 0 0 0 1px rgba(255, 255, 255, .18);
+  display: block;
+}
+
+/* Bouton désactivé (Enabled = false) : reste visible pour qu'on sache qu'il est là, mais clairement coupé. */
+.keytile.is-off { opacity: .4; filter: grayscale(.5); }

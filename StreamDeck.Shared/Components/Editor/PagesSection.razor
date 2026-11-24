@@ -1,0 +1,304 @@
+<section class="settings-card">
+    <div class="settings-card-head">
+        <span class="settings-chip"><i class="fa-solid fa-grip"></i></span>
+        <div>
+            <h2>Boutons de « @State.Ws.Name »</h2>
+            <p>@Summary</p>
+        </div>
+    </div>
+
+    <div class="settings-tabs" role="tablist" aria-label="Pages">
+        @for (var i = 0; i < State.PageCount; i++)
+        {
+            var index = i;
+            <button type="button" class="@TabClass(index)" @onclick="() => Select(index)">
+                <span>@TabLabel(index)</span>
+                <span class="@CountClass(index)">@CountText(index)</span>
+            </button>
+        }
+        <button type="button" class="settings-tab settings-tab-add" @onclick="AddPage" aria-label="Ajouter une page" title="Ajouter une page">
+            <i class="fa-solid fa-plus"></i>
+        </button>
+    </div>
+
+    <div class="settings-page-bar">
+        <label class="settings-field settings-page-name">
+            <span class="settings-label">Nom de la page (facultatif)</span>
+            <span class="settings-input settings-input-plain">
+                <input @bind="Page.Name" placeholder="@DefaultName" autocomplete="off" />
+            </span>
+        </label>
+
+        <div class="settings-page-actions">
+            <button type="button" class="settings-btn settings-btn-icon" @onclick="() => MovePage(-1)" disabled="@IsFirstPage" aria-label="Page vers la gauche" title="Déplacer la page vers la gauche">
+                <i class="fa-solid fa-arrow-left"></i>
+            </button>
+            <button type="button" class="settings-btn settings-btn-icon" @onclick="() => MovePage(1)" disabled="@IsLastPage" aria-label="Page vers la droite" title="Déplacer la page vers la droite">
+                <i class="fa-solid fa-arrow-right"></i>
+            </button>
+            <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="RequestDeletePage" disabled="@OnlyOnePage" aria-label="Supprimer la page" title="Supprimer la page">
+                <i class="fa-solid fa-trash"></i>
+            </button>
+        </div>
+    </div>
+
+    @if (State.ConfirmPage == Page.Id)
+    {
+        <div class="settings-confirm" role="alert">
+            <span>Supprimer cette page et ses @Page.Buttons.Count bouton(s) ?</span>
+            <div class="settings-confirm-actions">
+                <button type="button" class="settings-btn settings-btn-danger" @onclick="DeletePage"><i class="fa-solid fa-trash"></i><span>Supprimer</span></button>
+                <button type="button" class="settings-btn" @onclick="Cancel"><span>Annuler</span></button>
+            </div>
+        </div>
+    }
+
+    <div class="settings-grid-box">
+        <div class="settings-grid-title">
+            <i class="fa-solid fa-table-cells-large"></i>
+            <span>Grille de cette page</span>
+        </div>
+
+        <div class="settings-grid-size">
+            <div>
+                <span class="settings-label">Boutons par ligne</span>
+                <NumberStepper Value="Page.Columns" ValueChanged="SetColumns" Min="1" Max="DeckPage.MaxColumns" />
+            </div>
+            <div>
+                <span class="settings-label">Lignes</span>
+                <NumberStepper Value="Page.Rows" ValueChanged="SetRows" Min="1" Max="DeckPage.MaxRows" />
+            </div>
+            <div>
+                <span class="settings-label">Espacement</span>
+                <div class="settings-kind" role="group" aria-label="Espacement">
+                    <button type="button" class="@SegmentClass(Page.Spacing == Spacing.Tight)" @onclick="() => SetSpacing(Spacing.Tight)">Serré</button>
+                    <button type="button" class="@SegmentClass(Page.Spacing == Spacing.Normal)" @onclick="() => SetSpacing(Spacing.Normal)">Normal</button>
+                    <button type="button" class="@SegmentClass(Page.Spacing == Spacing.Wide)" @onclick="() => SetSpacing(Spacing.Wide)">Large</button>
+                </div>
+            </div>
+            <div>
+                <span class="settings-label">Taille des icônes</span>
+                <div class="settings-kind" role="group" aria-label="Taille des icônes">
+                    <button type="button" class="@SegmentClass(Page.IconSize == IconSize.Small)" @onclick="() => SetIconSize(IconSize.Small)">Petite</button>
+                    <button type="button" class="@SegmentClass(Page.IconSize == IconSize.Normal)" @onclick="() => SetIconSize(IconSize.Normal)">Normale</button>
+                    <button type="button" class="@SegmentClass(Page.IconSize == IconSize.Large)" @onclick="() => SetIconSize(IconSize.Large)">Grande</button>
+                </div>
+            </div>
+        </div>
+
+        <p class="settings-capacity">
+            <i class="fa-solid fa-circle-info"></i>
+            <span>@CapacityText</span>
+        </p>
+    </div>
+
+    @if (Page.Buttons.Count == 0)
+    {
+        <p class="settings-empty">Cette page est vide.</p>
+    }
+
+    @if (Page.Buttons.Count > 1)
+    {
+        <p class="settings-hint settings-reorder-hint"><i class="fa-solid fa-grip-vertical"></i> Prends un bouton par sa poignée pour le réordonner (l'ordre décide de sa place dans la grille).</p>
+    }
+
+    <div class="settings-reorder-list" @onmouseup="CancelDrag" @onmousemove="OnPointerMove">
+        @foreach (var b in Page.Buttons)
+        {
+            <div @key="b.Id" class="@ReorderCardClass(b)"
+                 @onmouseenter="() => HoverButton(b)" @onmouseleave="UnhoverButton" @onmouseup="() => DropOn(b)">
+                <div class="settings-reorder-handle" @onmousedown="e => BeginDrag(e, b)" @onmousedown:preventDefault title="Glisser pour réordonner" aria-label="Glisser pour réordonner">
+                    <i class="fa-solid fa-grip-vertical"></i>
+                </div>
+                <div class="settings-reorder-body">
+                    <ButtonEditor State="State" Button="b" />
+                </div>
+            </div>
+        }
+
+        @if (_draggingButton is not null)
+        {
+            <div class="settings-reorder-ghost" style="left:@(_dragX.ToString(System.Globalization.CultureInfo.InvariantCulture))px; top:@(_dragY.ToString(System.Globalization.CultureInfo.InvariantCulture))px;">
+                <i class="fa-solid fa-grip-vertical"></i><span>@_draggingButton.Label</span>
+            </div>
+        }
+    </div>
+
+
+    <button type="button" class="settings-btn settings-btn-add" @onclick="AddButton" disabled="@PageFull">
+        <i class="fa-solid fa-plus"></i><span>@AddLabel</span>
+    </button>
+</section>
+
+@code {
+    private static readonly string[] Palette =
+    {
+        "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+        "#ec4899", "#14b8a6", "#64748b", "#f97316", "#0ea5e9"
+    };
+
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    private DeckPage Page => State.Page;
+    private bool OnlyOnePage => State.PageCount <= 1;
+    private bool IsFirstPage => State.PageIndex <= 0;
+    private bool IsLastPage => State.PageIndex >= State.PageCount - 1;
+    private bool PageFull => !Page.CanFit(1, 1);
+
+    private string DefaultName => $"Page {State.PageIndex + 1}";
+    private string Summary => $"{State.PageCount} page(s). Chaque page a sa propre grille.";
+
+    private string CapacityText =>
+        $"{Page.UsedCells} case(s) utilisée(s) sur {Page.Cells}. Un bouton large ou haut occupe plusieurs cases. Si la grille devient trop petite, les boutons en trop passent sur la page suivante.";
+
+    private string AddLabel => PageFull
+        ? $"Page pleine ({Page.UsedCells}/{Page.Cells}) : ajoute une page ou agrandis la grille"
+        : "Ajouter un bouton";
+
+    private string TabClass(int index) => index == State.PageIndex ? "settings-tab is-active" : "settings-tab";
+    private string SegmentClass(bool active) => active ? "settings-kind-btn is-active" : "settings-kind-btn";
+
+    private string TabLabel(int index)
+    {
+        var name = State.Ws.Pages[index].Name;
+        return string.IsNullOrWhiteSpace(name) ? $"Page {index + 1}" : name.Trim();
+    }
+
+    private string CountText(int index) => $"{State.Ws.Pages[index].UsedCells}/{State.Ws.Pages[index].Cells}";
+
+    private string CountClass(int index) =>
+        State.Ws.Pages[index].CanFit(1, 1) ? "settings-tab-count" : "settings-tab-count is-full";
+
+    // ----- Pages -----
+
+    private void Select(int index)
+    {
+        State.PageIndex = index;
+        State.CancelConfirm();
+        State.Notify();
+    }
+
+    private void AddPage()
+    {
+        // La nouvelle page reprend la grille de la page affichée.
+        State.Ws.Pages.Add(Page.NewPageLikeThis());
+        Select(State.Ws.Pages.Count - 1);
+    }
+
+    private void MovePage(int delta)
+    {
+        var i = State.PageIndex;
+        var j = i + delta;
+        if (j < 0 || j >= State.PageCount) return;
+
+        (State.Ws.Pages[i], State.Ws.Pages[j]) = (State.Ws.Pages[j], State.Ws.Pages[i]);
+        State.PageIndex = j;
+        State.Notify();
+    }
+
+    private void RequestDeletePage()
+    {
+        if (OnlyOnePage) return;
+
+        if (Page.Buttons.Count == 0) DeletePage();
+        else State.ConfirmPage = Page.Id;
+    }
+
+    private void Cancel() => State.CancelConfirm();
+
+    private void DeletePage()
+    {
+        if (OnlyOnePage) return;
+
+        State.Ws.Pages.RemoveAt(State.PageIndex);
+        State.ClampPage();
+        State.CancelConfirm();
+        State.Notify();
+    }
+
+    // ----- Grille de la page -----
+
+    private void SetColumns(int value) => ChangeGrid(() => Page.Columns = value);
+    private void SetRows(int value) => ChangeGrid(() => Page.Rows = value);
+    private void SetSpacing(Spacing value) => ChangeGrid(() => Page.Spacing = value);
+    private void SetIconSize(IconSize value) => ChangeGrid(() => Page.IconSize = value);
+
+    private void ChangeGrid(Action change)
+    {
+        change();
+
+        // Les boutons qui ne tiennent plus passent sur la page suivante.
+        State.Ws.Normalize();
+        State.ClampPage();
+        State.Notify();
+    }
+
+    // ----- Boutons -----
+
+    private void AddButton()
+    {
+        if (PageFull) return;
+
+        Page.Buttons.Add(new DeckButton { Color = Palette[Page.Buttons.Count % Palette.Length] });
+        State.Notify();
+    }
+
+    // ----- Réordonner par glisser-déposer (souris, sans l'API HTML5 native) -----
+
+    private DeckButton? _draggingButton;
+    private DeckButton? _dragOverButton;
+    private double _dragX;
+    private double _dragY;
+
+    private string ReorderCardClass(DeckButton b)
+    {
+        var css = "settings-reorder-card";
+        if (_draggingButton == b) css += " is-dragging";
+        if (_dragOverButton == b) css += " is-dragover";
+        return css;
+    }
+
+    private void BeginDrag(MouseEventArgs e, DeckButton b)
+    {
+        _draggingButton = b;
+        _dragOverButton = null;
+        _dragX = e.ClientX;
+        _dragY = e.ClientY;
+    }
+
+    private void HoverButton(DeckButton b)
+    {
+        if (_draggingButton is not null) _dragOverButton = b;
+    }
+
+    private void UnhoverButton()
+    {
+        if (_draggingButton is not null) _dragOverButton = null;
+    }
+
+    private void OnPointerMove(MouseEventArgs e)
+    {
+        if (_draggingButton is null) return;
+        _dragX = e.ClientX;
+        _dragY = e.ClientY;
+    }
+
+    private void CancelDrag()
+    {
+        _draggingButton = null;
+        _dragOverButton = null;
+    }
+
+    /// <summary>Relâché sur une carte : le bouton tenu prend sa place (juste avant elle).</summary>
+    private void DropOn(DeckButton target)
+    {
+        var dragged = _draggingButton;
+        _draggingButton = null;
+        _dragOverButton = null;
+        if (dragged is null || dragged == target) return;
+
+        Page.Buttons.Remove(dragged);
+        Page.Buttons.Insert(Page.Buttons.IndexOf(target), dragged);
+        State.Notify();
+    }
+}

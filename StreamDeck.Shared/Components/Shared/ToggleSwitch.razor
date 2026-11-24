@@ -1,0 +1,23 @@
+<button type="button" class="@CssClass" role="switch" aria-checked="@AriaChecked" @onclick="Toggle" disabled="@Disabled">
+    <span class="toggle-text">
+        <span class="toggle-title">@Label</span>
+        @if (!string.IsNullOrEmpty(Description))
+        {
+            <span class="toggle-desc">@Description</span>
+        }
+    </span>
+    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+</button>
+
+@code {
+    [Parameter] public string Label { get; set; } = string.Empty;
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public bool Value { get; set; }
+    [Parameter] public EventCallback<bool> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private string CssClass => Value ? "toggle is-on" : "toggle";
+    private string AriaChecked => Value ? "true" : "false";
+
+    private Task Toggle() => ValueChanged.InvokeAsync(!Value);
+}

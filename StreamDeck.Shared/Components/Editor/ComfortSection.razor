@@ -1,0 +1,62 @@
+@inject IAppPlatform Platform
+
+<section class="settings-card">
+    <div class="settings-card-head">
+        <span class="settings-chip"><i class="fa-solid fa-moon"></i></span>
+        <div>
+            <h2>Confort</h2>
+            <p>Écran de veille et retour au toucher.</p>
+        </div>
+    </div>
+
+    <ChoiceField Label="Assombrir l'écran après" Items="IdleChoices" Value="@IdleValue" ValueChanged="SetIdle"
+                 PickerIcon="fa-solid fa-moon" />
+    <p class="settings-hint">L'écran devient noir avec l'heure. Un toucher le réveille, sans déclencher de bouton.</p>
+
+    @if (Platform.CanVibrate)
+    {
+        <ToggleSwitch Label="Vibration au toucher" Description="Une courte vibration à chaque appui sur un bouton."
+                      Value="State.Cfg.Display.Haptics" ValueChanged="SetHaptics" />
+    }
+</section>
+
+@code {
+    private static readonly IReadOnlyList<ChoiceItem> IdleChoices = new List<ChoiceItem>
+    {
+        new("0", "Jamais", "L'écran reste allumé", "fa-solid fa-sun"),
+        new("1", "1 minute"),
+        new("2", "2 minutes"),
+        new("5", "5 minutes"),
+        new("10", "10 minutes"),
+        new("15", "15 minutes"),
+        new("30", "30 minutes"),
+        new("60", "1 heure"),
+        new("120", "2 heures")
+    };
+
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    // Une durée saisie ailleurs (import) qui n'est pas dans la liste est ramenée à la plus proche.
+    private string IdleValue
+    {
+        get
+        {
+            var minutes = State.Cfg.Display.IdleMinutes;
+            var closest = IdleChoices.Select(c => int.Parse(c.Value)).OrderBy(v => Math.Abs(v - minutes)).First();
+            return closest.ToString();
+        }
+    }
+
+    private void SetIdle(string value)
+    {
+        if (int.TryParse(value, out var minutes))
+            State.Cfg.Display.IdleMinutes = minutes;
+        State.Notify();
+    }
+
+    private void SetHaptics(bool value)
+    {
+        State.Cfg.Display.Haptics = value;
+        State.Notify();
+    }
+}

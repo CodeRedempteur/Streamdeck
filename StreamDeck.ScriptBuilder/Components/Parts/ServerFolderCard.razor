@@ -1,0 +1,150 @@
+@inject BuilderConfigService Config
+@inject ScriptStore Store
+
+<section class="settings-card">
+    <div class="settings-card-head">
+        <span class="settings-chip"><i class="fa-solid fa-server"></i></span>
+        <div>
+            <h2>Dossier du serveur NFC</h2>
+            <p>Celui qui contient <code>server.ps1</code> et le dossier <code>Script</code> : c'est là que les scripts sont créés.</p>
+        </div>
+    </div>
+
+    <PathField Label="Dossier" Value="@_folder" ValueChanged="SetFolder" Mode="BrowseMode.Folder" Placeholder="C:\NFCServer" />
+
+    <div class="sf-actions">
+        <button type="button" class="settings-btn" @onclick="SearchAsync" disabled="@_searching">
+            <i class="@(_searching ? "fa-solid fa-spinner fa-spin" : "fa-solid fa-magnifying-glass")"></i><span>Le chercher automatiquement</span>
+        </button>
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="Apply" disabled="@(!_status.Usable)">
+            <i class="fa-solid fa-check"></i><span>Utiliser ce dossier</span>
+        </button>
+    </div>
+
+    @if (_candidates is not null)
+    {
+        @if (_candidates.Count == 0)
+        {
+            <p class="settings-hint">Aucun dossier trouvé aux endroits habituels : utilise « Parcourir ».</p>
+        }
+        else
+        {
+            <div class="sf-candidates" role="group" aria-label="Dossiers trouvés">
+                @foreach (var c in _candidates)
+                {
+                    <button type="button" class="fb-chip" @onclick="() => Pick(c)" title="@c"><i class="fa-solid fa-folder"></i><span>@c</span></button>
+                }
+            </div>
+        }
+    }
+
+    <ul class="sf-status">
+        <li class="@Class(_status.Exists)"><i class="@Icon(_status.Exists)"></i> Le dossier existe</li>
+        <li class="@Class(_status.HasServer)"><i class="@Icon(_status.HasServer)"></i> <code>server.ps1</code> présent</li>
+        <li class="@Class(_status.HasScriptDir)"><i class="@Icon(_status.HasScriptDir)"></i> Dossier <code>Script</code> présent @(_status.Exists && !_status.HasScriptDir ? "(il sera créé)" : "")</li>
+        <li class="@Class(_status.HasNfcNative, true)"><i class="@Icon(_status.HasNfcNative, true)"></i> <code>NfcNative.ps1</code> (volume, touches média) <span class="sf-note">@(_status.HasNfcNative ? "" : "— absent : les étapes Volume et Média ne marcheront pas")</span></li>
+        <li class="@Class(_status.HasSpotifyHelper, true)"><i class="@Icon(_status.HasSpotifyHelper, true)"></i> <code>SpotifyHelper.ps1</code> <span class="sf-note">@(_status.HasSpotifyHelper ? "" : "— absent : l'étape Spotify ne marchera pas")</span></li>
+        <li class="@Class(_status.BuilderUtilsUpToDate, true)"><i class="@Icon(_status.BuilderUtilsUpToDate, true)"></i> <code>BuilderUtils.ps1</code> (fonctions des scripts créés) <span class="sf-note">@(_status.HasBuilderUtils ? (_status.BuilderUtilsUpToDate ? "" : "— ancienne version") : "— sera installé au premier enregistrement")</span></li>
+    </ul>
+
+    @if (_status.Usable && !_status.BuilderUtilsUpToDate)
+    {
+        <button type="button" class="settings-btn" @onclick="InstallHelpers"><i class="fa-solid fa-download"></i><span>Installer / mettre à jour BuilderUtils.ps1</span></button>
+    }
+
+    @if (_message is not null)
+    {
+        <p class="@(_messageOk ? "settings-test-result is-ok" : "settings-test-result is-err")"><i class="@(_messageOk ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_message</span></p>
+    }
+
+    @if (ShowAdvanced)
+    {
+        <h3 class="settings-subtitle">Test des scripts</h3>
+        <ChoiceField Label="PowerShell utilisé pour tester" Items="PowerShellChoices" Value="@Config.Current.PowerShellPath" ValueChanged="SetPowerShell" PickerIcon="fa-solid fa-terminal" />
+        <p class="settings-hint">Ton serveur utilise probablement le même. Windows PowerShell (5.1) est installé partout ; PowerShell 7 (<code>pwsh.exe</code>) s'installe à part.</p>
+
+        <h3 class="settings-subtitle">Redémarrage du serveur</h3>
+        <div class="sf-actions"><RestartServerButton /></div>
+        <ToggleSwitch Label="Redémarrer en administrateur"
+                      Description="Windows demande une confirmation à chaque redémarrage. Actif seulement si ton serveur doit tourner en administrateur ; sinon l'application le détecte toute seule."
+                      Value="Config.Current.ServerRunAsAdmin" ValueChanged="SetRunAsAdmin" />
+    }
+</section>
+
+@code {
+    private static readonly IReadOnlyList<ChoiceItem> PowerShellChoices = new List<ChoiceItem>
+    {
+        new("powershell.exe", "Windows PowerShell (5.1)", "powershell.exe", "fa-solid fa-terminal"),
+        new("pwsh.exe", "PowerShell 7", "pwsh.exe", "fa-solid fa-terminal")
+    };
+
+    [Parameter] public bool ShowAdvanced { get; set; }
+    [Parameter] public EventCallback OnConfigured { get; set; }
+
+    private string _folder = string.Empty;
+    private FolderStatus _status = ScriptStore.Inspect(null);
+    private IReadOnlyList<string>? _candidates;
+    private bool _searching;
+    private string? _message;
+    private bool _messageOk;
+
+    protected override void OnInitialized()
+    {
+        _folder = Config.Current.ServerFolder;
+        _status = ScriptStore.Inspect(_folder);
+    }
+
+    private static string Class(bool ok, bool optional = false) => ok ? "is-ok" : optional ? "is-warn" : "is-err";
+    private static string Icon(bool ok, bool optional = false) =>
+        ok ? "fa-solid fa-circle-check" : optional ? "fa-solid fa-circle-exclamation" : "fa-solid fa-circle-xmark";
+
+    private void SetFolder(string value)
+    {
+        _folder = value;
+        _status = ScriptStore.Inspect(_folder);
+        _message = null;
+    }
+
+    private void Pick(string folder) => SetFolder(folder);
+
+    private async Task SearchAsync()
+    {
+        _searching = true;
+        StateHasChanged();
+        _candidates = await Task.Run(() => ServerFolderLocator.FindCandidates());
+        _searching = false;
+
+        if (_candidates.Count == 1 && !_status.Usable) SetFolder(_candidates[0]);
+    }
+
+    private async Task Apply()
+    {
+        Config.Update(c => c.ServerFolder = _folder);
+        _message = "Dossier enregistré.";
+        _messageOk = true;
+        await OnConfigured.InvokeAsync();
+    }
+
+    private void InstallHelpers()
+    {
+        try
+        {
+            if (Config.Current.ServerFolder != _folder)
+                Config.Update(c => c.ServerFolder = _folder);
+
+            Store.EnsureHelpers();
+            _status = ScriptStore.Inspect(_folder);
+            _message = "BuilderUtils.ps1 est à jour.";
+            _messageOk = true;
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+            _messageOk = false;
+        }
+    }
+
+    private void SetPowerShell(string value) => Config.Update(c => c.PowerShellPath = value);
+
+    private void SetRunAsAdmin(bool value) => Config.Update(c => c.ServerRunAsAdmin = value);
+}

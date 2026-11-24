@@ -1,0 +1,29 @@
+@implements IDisposable
+@inject ConfigService Config
+@inject IJSRuntime JS
+
+@code {
+    protected override void OnInitialized() => Config.Changed += OnConfigChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await ApplyAsync();
+    }
+
+    private void OnConfigChanged() => _ = InvokeAsync(ApplyAsync);
+
+    /// <summary>Envoie la durée d'inactivité au script d'assombrissement (deck.js).</summary>
+    private async Task ApplyAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("deck.idle.configure", Config.Current.Display.IdleMinutes);
+        }
+        catch (Exception)
+        {
+            // deck.js absent ou page en cours de fermeture : sans gravité.
+        }
+    }
+
+    public void Dispose() => Config.Changed -= OnConfigChanged;
+}

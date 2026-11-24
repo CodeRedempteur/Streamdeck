@@ -1,0 +1,64 @@
+@* En-tête unique, strictement identique sur les trois pages (Library.razor pour Scripts/Widget, Settings.razor) —
+   v1.34.3, en réponse directe au retour : plus trois en-têtes différents à tenir manuellement synchronisés (icône à
+   côté du titre retirée, navigation à onglets réelle plutôt que trois boutons "chips" repris du sélecteur d'espaces
+   de travail, bouton widget réduit à une icône, contrôles serveur déplacés ici). Les trois pages ne passent que leur
+   onglet actif et un sous-titre : volontairement AUCUNE action propre à une page ici (v1.34.3, correctif — un
+   précédent essai avec un RenderFragment "ExtraActions" pour "Nouveau dossier"/"Nouveau script" faisait justement
+   revenir des en-têtes différents d'une page à l'autre ; ces boutons vivent maintenant dans la barre d'outils de la
+   page Scripts elle-même, voir Library.razor .lib-toolbar). *@
+@inject NavigationManager Nav
+@inject IWidgetHost WidgetHost
+@inject ScriptStore Store
+
+<header class="app-header">
+    <div class="app-header-title">
+        <h1>Script Builder</h1>
+        <p>@Subtitle <span class="lib-version">v@(BuildInfo.Version)</span></p>
+    </div>
+
+    <nav class="app-nav" aria-label="Navigation principale">
+        <button type="button" class="@(ActiveTab == "scripts" ? "app-nav-tab is-on" : "app-nav-tab")" @onclick='() => Nav.NavigateTo("/")'>
+            <i class="fa-solid fa-scroll"></i><span>Scripts</span>
+        </button>
+        <button type="button" class="@(ActiveTab == "widget" ? "app-nav-tab is-on" : "app-nav-tab")" @onclick='() => Nav.NavigateTo("/?tab=widget")'>
+            <i class="fa-solid fa-gauge"></i><span>Widget</span>
+        </button>
+        @* v1.38 : onglet « Roues » — roues WheelConvert (Shift + clic droit maintenu), voir Pages/Wheels.razor. *@
+        <button type="button" class="@(ActiveTab == "wheels" ? "app-nav-tab is-on" : "app-nav-tab")" @onclick='() => Nav.NavigateTo("/wheels")'>
+            <i class="fa-solid fa-circle-notch"></i><span>Roues</span>
+        </button>
+        <button type="button" class="@(ActiveTab == "todos" ? "app-nav-tab is-on" : "app-nav-tab")" @onclick='() => Nav.NavigateTo("/todos")'>
+            <i class="fa-solid fa-list-check"></i><span>Tâches</span>
+        </button>
+        <button type="button" class="@(ActiveTab == "calendar" ? "app-nav-tab is-on" : "app-nav-tab")" @onclick='() => Nav.NavigateTo("/calendar")'>
+            <i class="fa-solid fa-calendar-days"></i><span>Calendrier</span>
+        </button>
+        <button type="button" class="@(ActiveTab == "phone" ? "app-nav-tab is-on" : "app-nav-tab")" @onclick='() => Nav.NavigateTo("/phone")'>
+            <i class="fa-solid fa-mobile-screen-button"></i><span>Téléphone</span>
+        </button>
+        <button type="button" class="@(ActiveTab == "settings" ? "app-nav-tab is-on" : "app-nav-tab")" @onclick='() => Nav.NavigateTo("settings")'>
+            <i class="fa-solid fa-gear"></i><span>Réglages</span>
+        </button>
+    </nav>
+
+    <div class="app-header-actions">
+        @* Icône seule (pas de texte, demandé) — toujours au même endroit, sur les trois pages : le widget n'a pas de
+           barre de titre, donc c'est le seul moyen fiable de le retrouver s'il s'est fermé ou est passé derrière
+           d'autres fenêtres. *@
+        <button type="button" class="settings-btn settings-btn-icon" @onclick="() => WidgetHost.Open()" disabled="@(!WidgetHost.CanOpen)" aria-label="Ouvrir le widget" title="Ouvrir le widget, ou le ramener au premier plan s'il est déjà ouvert">
+            <i class="fa-solid fa-window-restore"></i>
+        </button>
+        @if (Store.HasServerFolder)
+        {
+            <StopAllMacrosButton IconOnly="true" />
+            <RestartServerButton IconOnly="true" />
+        }
+    </div>
+</header>
+
+@code {
+    /// <summary>"scripts", "widget" ou "settings" — détermine quel onglet est mis en évidence.</summary>
+    [Parameter] public string ActiveTab { get; set; } = "scripts";
+
+    [Parameter] public string Subtitle { get; set; } = "Crée les scripts PowerShell de ton Stream Deck, sans écrire de code.";
+}

@@ -1,0 +1,405 @@
+@* v1.35 : corps de l'onglet « Téléphone » (PhoneTemplates.razor), extrait tel quel en composant réutilisable pour
+   pouvoir l'intégrer AUSSI dans la config du Widget (demandé explicitement : "permet d'importé des page config pour
+   le tel directement sur le widget") — même liste de modèles, même éditeur (WorkspaceSection/PagesSection, réutilisés
+   tels quels depuis l'app téléphone), sans dupliquer le code. PhoneTemplates.razor (page "/phone") ne fait plus que
+   poser <MainHeader> autour de ce composant. *@
+@inject BuilderConfigService Config
+@inject PhoneConfigTransferService Transfer
+
+<div class="lib phone-tpl-panel">
+    @if (_editing is null)
+    {
+        <div class="lib-toolbar">
+            <button type="button" class="settings-btn settings-btn-primary" @onclick="CreateTemplate">
+                <i class="fa-solid fa-plus"></i><span>Nouveau modèle</span>
+            </button>
+            @if (Config.Current.PhoneTargets.Count > 1)
+            {
+                <ChoiceField Label="Envoyer à" Items="PhoneTargetChoices" Value="@TargetPhoneValue" ValueChanged="SetTargetPhone" PickerIcon="fa-solid fa-mobile-screen-button" />
+            }
+        </div>
+
+        @if (Config.Current.PhoneTargets.Count == 0)
+        {
+            <p class="settings-hint">Configure d'abord un téléphone dans <a href="settings">Réglages → Téléphone</a> pour pouvoir envoyer un modèle.</p>
+        }
+        else if (TargetPhone is null || string.IsNullOrWhiteSpace(TargetPhone.IpAddress))
+        {
+            <p class="settings-hint">Renseigne l'adresse IP du téléphone sélectionné dans <a href="settings">Réglages → Téléphone</a> pour pouvoir envoyer un modèle.</p>
+        }
+
+        @if (Config.Current.PhoneTemplates.Count == 0)
+        {
+            <div class="lib-empty">
+                <i class="fa-solid fa-mobile-screen-button"></i>
+                <h2>Aucun modèle pour l'instant</h2>
+                <p>Crée un modèle pour composer les espaces, pages et boutons (avec leurs images) d'un téléphone depuis le PC, puis l'envoyer en Wi-Fi.</p>
+            </div>
+        }
+        else
+        {
+            <div class="phone-tpl-grid">
+                @foreach (var t in Config.Current.PhoneTemplates)
+                {
+                    <div class="lib-card phone-tpl-card">
+                        <div class="lib-card-main">
+                            <span class="lib-card-icon"><i class="fa-solid fa-mobile-screen-button"></i></span>
+                            <div class="lib-card-text">
+                                <input class="settings-input-plain phone-tpl-name" value="@t.Name" @onchange="e => Rename(t, e.Value?.ToString() ?? t.Name)" aria-label="Nom du modèle" />
+                                <span class="lib-card-meta">
+                                    <span>@t.Config.Workspaces.Count espace(s)</span>
+                                    <span>·</span>
+                                    <span>@CountButtons(t) bouton(s)</span>
+                                    <span>·</span>
+                                    <span>modifié @t.UpdatedAt.ToString("dd/MM HH:mm")</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="lib-card-actions">
+                            <button type="button" class="settings-btn" @onclick="() => Open(t)"><i class="fa-solid fa-pen"></i><span>Ouvrir</span></button>
+                            <button type="button" class="settings-btn" @onclick="() => Duplicate(t)" title="Dupliquer"><i class="fa-solid fa-copy"></i></button>
+                            <button type="button" class="settings-btn" @onclick="() => Export(t)" disabled="@(_exporting == t.Id)" title="Envoyer au téléphone">
+                                @if (_exporting == t.Id) { <i class="fa-solid fa-spinner fa-spin"></i> } else { <i class="fa-solid fa-paper-plane"></i> }
+                                <span>Envoyer au téléphone</span>
+                            </button>
+                            @* v1.35, demandé explicitement ("dans l'onglet des modèles téléphone je puisse dire que la page widget
+                               doit contenir les boutons de ce modèle") : copie (pas un lien vivant — comme "Envoyer au téléphone",
+                               aucune config de cette appli ne reste synchronisée en continu) des boutons d'UNE page du modèle vers
+                               UNE page du widget, sous forme de touches épinglées normales. *@
+                            <button type="button" class="settings-btn" @onclick="() => OpenImport(t)" title="Importer les boutons d'une page vers une page du widget">
+                                <i class="fa-solid fa-arrow-right-to-bracket"></i><span>Vers le widget</span>
+                            </button>
+                            <button type="button" class="settings-btn settings-btn-danger settings-btn-icon" @onclick="() => Delete(t)" title="Supprimer" aria-label="Supprimer">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+
+                        @if (_exportMessage.TryGetValue(t.Id, out var msg))
+                        {
+                            <p class="settings-hint @(msg.Ok ? "" : "is-error")">@msg.Text</p>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    }
+    else
+    {
+        <div class="lib-toolbar phone-tpl-editor-head">
+            <button type="button" class="settings-btn settings-btn-icon" @onclick="CloseEditor" aria-label="Retour" title="Retour (enregistre d'abord)">
+                <i class="fa-solid fa-arrow-left"></i>
+            </button>
+            <input class="settings-input-plain phone-tpl-editor-name" value="@_editing.Name" @onchange="e => Rename(_editing, e.Value?.ToString() ?? _editing.Name)" aria-label="Nom du modèle" />
+            <button type="button" class="settings-btn settings-btn-primary" @onclick="SaveEditor"><i class="fa-solid fa-floppy-disk"></i><span>Enregistrer</span></button>
+            <button type="button" class="settings-btn" @onclick="() => ExportEditing()" disabled="@(_exporting == _editing.Id)">
+                @if (_exporting == _editing.Id) { <i class="fa-solid fa-spinner fa-spin"></i> } else { <i class="fa-solid fa-paper-plane"></i> }
+                <span>Envoyer au téléphone</span>
+            </button>
+        </div>
+
+        @if (_exportMessage.TryGetValue(_editing.Id, out var editMsg))
+        {
+            <p class="settings-hint @(editMsg.Ok ? "" : "is-error")">@editMsg.Text</p>
+        }
+
+        @if (_state is not null)
+        {
+            <PcSection State="_state" />
+            <WorkspaceSection State="_state" />
+            <PagesSection State="_state" />
+        }
+    }
+</div>
+
+@if (_state is not null)
+{
+    <IconPicker Open="_state.IconPickerOpen" Current="@_state.IconCurrent" OnPick="PickIcon" OnClose="CloseIconPicker" />
+}
+
+@* v1.35 : copie les boutons d'UNE page de ce modèle vers UNE page du widget (nouvelle ou existante), sous forme de
+   touches épinglées normales — seuls les boutons de type Script et Choix multiple (options de type Script
+   seulement) sont pris en charge pour l'instant, le widget n'exécutant que des scripts locaux (voir
+   ConvertPhonePageToPins/WidgetPin.Options) ; les autres sont comptés et signalés plutôt qu'ignorés en silence. *@
+<Modal Open="_importingTemplate is not null" Title="Importer vers le widget" Icon="fa-solid fa-arrow-right-to-bracket" OnClose="CloseImport">
+    <ChildContent>
+        @if (_importingTemplate is not null)
+        {
+            <label class="settings-field">
+                <span class="settings-label">Page du téléphone à importer</span>
+                <ChoiceField Items="ImportSourcePageChoices" Value="@_importSourceKey" ValueChanged="@(v => _importSourceKey = v)" PickerIcon="fa-solid fa-mobile-screen-button" />
+            </label>
+            <label class="settings-field">
+                <span class="settings-label">Page du widget (destination)</span>
+                <ChoiceField Items="ImportTargetChoices" Value="@_importTargetKey" ValueChanged="@(v => _importTargetKey = v)" PickerIcon="fa-solid fa-desktop" />
+            </label>
+            @if (_importMessage is not null)
+            {
+                <p class="settings-hint @(_importOk ? "" : "is-error")">@_importMessage</p>
+            }
+            <p class="settings-hint"><i class="fa-solid fa-circle-info"></i> Copie figée au moment de l'import (comme « Envoyer au téléphone ») — pas de lien vivant avec le modèle : un changement fait plus tard sur la page du téléphone n'est pas répercuté automatiquement sur le widget.</p>
+        }
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="ConfirmImport"><i class="fa-solid fa-check"></i><span>Importer</span></button>
+        <button type="button" class="settings-btn" @onclick="CloseImport">Fermer</button>
+    </Footer>
+</Modal>
+
+@code {
+    private PhoneConfigTemplate? _editing;
+    private EditorState? _state;
+    private string? _exporting;
+    private readonly Dictionary<string, (bool Ok, string Text)> _exportMessage = new();
+
+    private Guid? _targetPhoneId;
+
+    private IReadOnlyList<ChoiceItem> PhoneTargetChoices => Config.Current.PhoneTargets
+        .Select(p => new ChoiceItem(p.Id.ToString(), p.Name, null, "fa-solid fa-mobile-screen-button"))
+        .ToList();
+
+    private PhoneTarget? TargetPhone =>
+        Config.Current.PhoneTargets.FirstOrDefault(p => p.Id == _targetPhoneId)
+        ?? Config.Current.DefaultPhone
+        ?? Config.Current.PhoneTargets.FirstOrDefault();
+
+    private string TargetPhoneValue => TargetPhone?.Id.ToString() ?? "";
+
+    private void SetTargetPhone(string v) => _targetPhoneId = Guid.TryParse(v, out var id) ? id : null;
+
+    private static int CountButtons(PhoneConfigTemplate t) => t.Config.Workspaces.Sum(w => w.Pages.Sum(p => p.Buttons.Count));
+
+    private void CreateTemplate()
+    {
+        var cfg = new DeckConfig();
+        cfg.Workspaces.Add(new Workspace { Name = "Principal", Icon = "fa-solid fa-table-cells-large" });
+        cfg.EnsureValid();
+
+        var template = new PhoneConfigTemplate { Name = $"Modèle {Config.Current.PhoneTemplates.Count + 1}", Config = cfg };
+        Config.Update(c => c.PhoneTemplates.Add(template));
+        Open(template);
+    }
+
+    private void Rename(PhoneConfigTemplate t, string name)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(name) ? t.Name : name.Trim();
+        t.Name = trimmed;
+        Config.Update(c =>
+        {
+            var found = c.PhoneTemplates.FirstOrDefault(x => x.Id == t.Id);
+            if (found is not null) { found.Name = trimmed; found.UpdatedAt = DateTime.Now; }
+        });
+    }
+
+    private void Duplicate(PhoneConfigTemplate t)
+    {
+        var copy = new PhoneConfigTemplate { Name = $"{t.Name} (copie)", Config = t.Config.Clone() };
+        Config.Update(c => c.PhoneTemplates.Add(copy));
+    }
+
+    private void Delete(PhoneConfigTemplate t)
+    {
+        Config.Update(c => c.PhoneTemplates.RemoveAll(x => x.Id == t.Id));
+        _exportMessage.Remove(t.Id);
+    }
+
+    private void Open(PhoneConfigTemplate t)
+    {
+        _editing = t;
+        var cfg = t.Config.Clone();
+        cfg.EnsureValid();
+        _state = new EditorState(cfg, 0);
+        _state.Changed += OnStateChanged;
+    }
+
+    private void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    private void CloseEditor()
+    {
+        SaveEditor();
+        if (_state is not null) _state.Changed -= OnStateChanged;
+        _state = null;
+        _editing = null;
+    }
+
+    private void SaveEditor()
+    {
+        if (_editing is null || _state is null) return;
+
+        var cfg = _state.Cfg;
+        cfg.ActiveWorkspaceId = _state.Ws.Id;
+        var id = _editing.Id;
+
+        _editing.Config = cfg.Clone();
+        _editing.UpdatedAt = DateTime.Now;
+
+        Config.Update(c =>
+        {
+            var found = c.PhoneTemplates.FirstOrDefault(x => x.Id == id);
+            if (found is not null) { found.Config = cfg.Clone(); found.UpdatedAt = DateTime.Now; }
+        });
+    }
+
+    private void PickIcon(string cls) => _state?.PickIcon(cls);
+    private void CloseIconPicker() => _state?.CloseIconPicker();
+
+    private Task ExportEditing()
+    {
+        SaveEditor();
+        return _editing is null ? Task.CompletedTask : Export(_editing);
+    }
+
+    private async Task Export(PhoneConfigTemplate t)
+    {
+        var target = TargetPhone;
+        if (target is null || string.IsNullOrWhiteSpace(target.IpAddress))
+        {
+            _exportMessage[t.Id] = (false, "Configure d'abord l'adresse d'un téléphone dans Réglages → Téléphone.");
+            return;
+        }
+
+        _exporting = t.Id;
+        StateHasChanged();
+
+        var result = await Transfer.ExportAsync(target, t.Config);
+        _exportMessage[t.Id] = (result.Ok, result.Ok ? "Envoyé au téléphone." : result.Message);
+        _exporting = null;
+    }
+
+    // ----- Import vers le widget (v1.35) -----
+
+    private PhoneConfigTemplate? _importingTemplate;
+    private string _importSourceKey = "";
+    private string _importTargetKey = "";
+    private string? _importMessage;
+    private bool _importOk;
+
+    private IReadOnlyList<ChoiceItem> ImportSourcePageChoices =>
+        _importingTemplate is null
+            ? Array.Empty<ChoiceItem>()
+            : _importingTemplate.Config.Workspaces
+                .SelectMany(w => w.Pages.Select(p => new ChoiceItem($"{w.Id}|{p.Id}", string.IsNullOrWhiteSpace(p.Name) ? "Page" : p.Name, w.Name, "fa-solid fa-mobile-screen-button")))
+                .ToList();
+
+    private IReadOnlyList<ChoiceItem> ImportTargetChoices =>
+        Config.Current.WidgetWorkspaces
+            .SelectMany(w => new[] { new ChoiceItem($"new|{w.Id}", "+ Nouvelle page", w.Name, "fa-solid fa-plus") }
+                .Concat(w.Pages.Select(p => new ChoiceItem($"{w.Id}|{p.Id}", string.IsNullOrWhiteSpace(p.Name) ? "Page" : p.Name, w.Name, "fa-solid fa-desktop"))))
+            .ToList();
+
+    private void OpenImport(PhoneConfigTemplate t)
+    {
+        _importingTemplate = t;
+        _importSourceKey = ImportSourcePageChoices.FirstOrDefault()?.Value ?? "";
+        _importTargetKey = ImportTargetChoices.FirstOrDefault()?.Value ?? "";
+        _importMessage = null;
+    }
+
+    private void CloseImport() => _importingTemplate = null;
+
+    /// <summary>
+    /// Ne garde que les boutons que le widget peut exécuter LOCALEMENT (voir Widget.razor/RunPinned — pas de PC
+    /// réseau à viser, le widget tourne déjà sur ce PC) : Script directement, Choix multiple si ses options sont
+    /// elles-mêmes de type Script. Les autres (Réveil, Action PC, Séquence, Curseur de volume, Médias, Affichage
+    /// plein écran, Retrouver le téléphone) sont comptés dans <c>Skipped</c> plutôt qu'importés approximativement.
+    /// </summary>
+    private static (List<WidgetPin> Pins, int Skipped) ConvertPhonePageToPins(DeckPage page)
+    {
+        var pins = new List<WidgetPin>();
+        var skipped = 0;
+
+        foreach (var b in page.Buttons)
+        {
+            if (b.Kind == ButtonKind.Script)
+            {
+                pins.Add(new WidgetPin
+                {
+                    ScriptName = b.Script,
+                    Icon = b.Icon,
+                    Color = b.Color,
+                    ImageUrl = b.ImageUrl,
+                    VoiceTriggers = new List<string>(b.VoiceTriggers),
+                    VoiceRequiresWakeWord = b.VoiceRequiresWakeWord
+                });
+            }
+            else if (b.Kind == ButtonKind.Picker)
+            {
+                var options = b.Options
+                    .Where(o => o.Type == StepType.Script && !string.IsNullOrWhiteSpace(o.Script))
+                    .Select(o => new ChoiceOption { Label = o.Label, Icon = o.Icon, ImageUrl = o.ImageUrl, Color = o.Color, Type = StepType.Script, Script = o.Script })
+                    .ToList();
+                if (options.Count == 0) { skipped++; continue; }
+
+                pins.Add(new WidgetPin
+                {
+                    Kind = "picker",
+                    ScriptName = b.Label,
+                    Icon = b.Icon,
+                    Color = b.Color,
+                    ImageUrl = b.ImageUrl,
+                    Options = options,
+                    VoiceTriggers = new List<string>(b.VoiceTriggers),
+                    VoiceRequiresWakeWord = b.VoiceRequiresWakeWord
+                });
+            }
+            else
+            {
+                skipped++;
+            }
+        }
+
+        return (pins, skipped);
+    }
+
+    private void ConfirmImport()
+    {
+        var template = _importingTemplate;
+        if (template is null) return;
+
+        var sourceParts = _importSourceKey.Split('|');
+        if (sourceParts.Length != 2 || !Guid.TryParse(sourceParts[0], out var sourceWsId) || !Guid.TryParse(sourceParts[1], out var sourcePageId))
+        {
+            _importOk = false; _importMessage = "Choisis une page du téléphone.";
+            return;
+        }
+
+        var sourcePage = template.Config.Workspaces.FirstOrDefault(w => w.Id == sourceWsId)?.Pages.FirstOrDefault(p => p.Id == sourcePageId);
+        if (sourcePage is null) { _importOk = false; _importMessage = "Cette page n'existe plus."; return; }
+
+        var targetParts = _importTargetKey.Split('|');
+        if (targetParts.Length != 2) { _importOk = false; _importMessage = "Choisis une page du widget."; return; }
+
+        var (pins, skipped) = ConvertPhonePageToPins(sourcePage);
+        if (pins.Count == 0)
+        {
+            _importOk = false;
+            _importMessage = "Aucun bouton importable sur cette page — seuls Script et Choix multiple (avec des options Script) sont pris en charge pour l'instant.";
+            return;
+        }
+
+        var pinIds = pins.Select(p => p.Id).ToList();
+        var isNewPage = targetParts[0] == "new";
+        var targetWorkspaceId = isNewPage ? targetParts[1] : targetParts[0];
+        var sourcePageName = sourcePage.Name;
+
+        Config.Update(c =>
+        {
+            c.WidgetPins.AddRange(pins);
+            var ws = c.WidgetWorkspaces.FirstOrDefault(w => w.Id == targetWorkspaceId);
+            if (ws is null) return;
+
+            WidgetPageEntry? page = isNewPage ? null : ws.Pages.FirstOrDefault(p => p.Id == targetParts[1]);
+            if (isNewPage)
+            {
+                page = new WidgetPageEntry { Name = sourcePageName };
+                ws.Pages.Add(page);
+            }
+            page?.Blocks.Add(new WidgetPageBlock { Type = "pins", PinIds = pinIds });
+        });
+
+        _importOk = true;
+        _importMessage = skipped == 0
+            ? $"{pins.Count} touche(s) importée(s) vers le widget."
+            : $"{pins.Count} touche(s) importée(s), {skipped} bouton(s) non pris en charge ignoré(s) (Réveil, Action PC, Séquence…).";
+    }
+}

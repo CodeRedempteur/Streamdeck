@@ -1,0 +1,65 @@
+@* Affiché juste avant de lancer un bouton (ou un choix d'un bouton "choix multiple") qui a au moins une variable
+   en mode "au lancement" : demande sa valeur, puis lance avec les valeurs saisies. *@
+
+<Modal Open="Open" Title="@Title" Icon="fa-solid fa-sliders" Size="narrow" OnClose="Cancel">
+    <ChildContent>
+        @foreach (var v in PromptVariables)
+        {
+            <div class="varprompt-field">
+                <span class="settings-label">@v.Name</span>
+                @if (v.Kind == VariableKind.Number)
+                {
+                    <NumberStepper Value="@GetNumber(v)" ValueChanged="@(n => SetNumber(v, n))" Min="v.Min" Max="v.Max" />
+                }
+                else
+                {
+                    <span class="settings-input">
+                        <i class="fa-solid fa-keyboard"></i>
+                        <input value="@GetText(v)" @oninput="@(e => SetText(v, (string?)e.Value ?? string.Empty))"
+                               maxlength="@v.MaxLength" autocomplete="off" spellcheck="false" />
+                    </span>
+                }
+            </div>
+        }
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="Cancel">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="Confirm"><i class="fa-solid fa-play"></i><span>Lancer</span></button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public IReadOnlyList<ButtonVariable> Variables { get; set; } = Array.Empty<ButtonVariable>();
+    [Parameter] public EventCallback<IReadOnlyDictionary<string, string>> OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private readonly Dictionary<string, string> _values = new();
+    private IReadOnlyList<string> _loadedFor = Array.Empty<string>();
+
+    private IEnumerable<ButtonVariable> PromptVariables => Variables.Where(v => v.Mode == VariableMode.Prompt);
+
+    protected override void OnParametersSet()
+    {
+        // Repart de la valeur réglée à chaque nouvelle ouverture (jamais en cours d'édition, sinon la saisie serait
+        // écrasée par chaque re-rendu du parent pendant qu'on tape).
+        var names = PromptVariables.Select(v => v.Name).ToList();
+        if (Open && !names.SequenceEqual(_loadedFor))
+        {
+            _values.Clear();
+            foreach (var v in PromptVariables) _values[v.Name] = v.Value;
+            _loadedFor = names;
+        }
+        if (!Open) _loadedFor = Array.Empty<string>();
+    }
+
+    private int GetNumber(ButtonVariable v) => _values.TryGetValue(v.Name, out var s) && int.TryParse(s, out var n) ? n : v.Min;
+    private void SetNumber(ButtonVariable v, int n) => _values[v.Name] = n.ToString();
+
+    private string GetText(ButtonVariable v) => _values.TryGetValue(v.Name, out var s) ? s : "";
+    private void SetText(ButtonVariable v, string s) => _values[v.Name] = s.Length > v.MaxLength ? s[..v.MaxLength] : s;
+
+    private Task Confirm() => OnConfirm.InvokeAsync(_values);
+    private Task Cancel() => OnCancel.InvokeAsync();
+}

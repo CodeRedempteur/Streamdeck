@@ -1,0 +1,54 @@
+/* PinPad : pavé numérique pour saisir un code PIN. */
+
+.pinpad { display: grid; justify-items: center; gap: 6px; }
+
+.pinpad-message { margin: 0 0 6px; color: var(--muted); text-align: center; }
+
+.pinpad-dots { display: flex; gap: 14px; min-height: 22px; align-items: center; }
+.pinpad-dot {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+  transition: background .12s ease, border-color .12s ease;
+}
+.pinpad-dot.is-filled { border-color: var(--accent); background: var(--accent); }
+
+.pinpad-feedback { min-height: 22px; margin: 4px 0 8px; color: var(--muted); font-size: .9rem; text-align: center; }
+.pinpad-feedback.is-error { color: var(--err); font-weight: 600; }
+
+.pinpad-keys {
+  display: grid;
+  grid-template-columns: repeat(3, 76px);
+  gap: 12px;
+}
+
+.pinpad-key {
+  height: 66px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .05);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.5rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .12s ease, transform .1s ease;
+}
+.pinpad-key:hover { background: rgba(255, 255, 255, .1); }
+.pinpad-key:active { transform: scale(.94); }
+.pinpad-key:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pinpad-key:disabled { opacity: .3; cursor: default; pointer-events: none; }
+
+.pinpad-key-alt { font-size: 1.2rem; color: var(--muted); }
+.pinpad-key-ok { border-color: transparent; background: var(--accent); color: #fff; font-size: 1.3rem; }
+.pinpad-key-ok:hover { background: var(--accent-strong); }
+
+@media (max-width: 380px) {
+  .pinpad-keys { grid-template-columns: repeat(3, 68px); gap: 10px; }
+  .pinpad-key { height: 60px; }
+}

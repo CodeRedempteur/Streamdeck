@@ -1,0 +1,49 @@
+@inject ProcessService Processes
+
+<div class="settings-field pathfield">
+    <span class="settings-label">@Label</span>
+    <div class="pathfield-row">
+        <span class="settings-input">
+            <i class="fa-solid fa-microchip"></i>
+            <input value="@Value" @oninput="OnInput" placeholder="@Placeholder" autocomplete="off" spellcheck="false" aria-label="@Label" />
+        </span>
+        <button type="button" class="settings-btn pathfield-btn" @onclick="OpenPicker" title="Choisir parmi les programmes ouverts">
+            <i class="fa-solid fa-list"></i><span>Programmes ouverts</span>
+        </button>
+    </div>
+    @if (!string.IsNullOrEmpty(Hint))
+    {
+        <p class="settings-hint">@Hint</p>
+    }
+</div>
+
+<ChoicePicker Open="_open" Title="Programmes ouverts" Icon="fa-solid fa-microchip" Items="_items" Current="@Value" OnPick="Pick" OnClose="Close" />
+
+@code {
+    [Parameter] public string Label { get; set; } = "Nom du processus";
+    [Parameter] public string Value { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public string? Hint { get; set; }
+
+    private bool _open;
+    private IReadOnlyList<ChoiceItem> _items = Array.Empty<ChoiceItem>();
+
+    private Task OnInput(ChangeEventArgs e) => ValueChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private void OpenPicker()
+    {
+        _items = Processes.RunningWindows()
+            .Select(w => new ChoiceItem(w.ProcessName, w.ProcessName, w.Title, "fa-solid fa-window-maximize"))
+            .ToList();
+        _open = true;
+    }
+
+    private void Close() => _open = false;
+
+    private async Task Pick(string name)
+    {
+        _open = false;
+        await ValueChanged.InvokeAsync(name);
+    }
+}

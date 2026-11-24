@@ -1,0 +1,127 @@
+<div class="settings-step">
+    <span class="settings-step-num">@Number</span>
+
+    <div class="settings-step-body">
+        <ChoiceField Items="TypeChoices" Value="@TypeValue" ValueChanged="SetType"
+                     Title="Type d'étape" PickerIcon="fa-solid fa-list-check" />
+
+        @switch (Step.Type)
+        {
+            case StepType.Script:
+                <span class="settings-input settings-step-input">
+                    <i class="fa-solid fa-terminal"></i>
+                    <input @bind="Step.Script" placeholder="Nom du script" autocomplete="off" spellcheck="false" aria-label="Nom du script" />
+                </span>
+                <ToggleSwitch Label="Attendre la fin du script" Description="Passe à l'étape suivante seulement quand il est terminé."
+                              Value="Step.WaitForEnd" ValueChanged="SetWait" />
+                break;
+
+            case StepType.PcAction:
+                <ChoiceField Items="CommandChoices" Value="@Step.Command" ValueChanged="SetCommand"
+                             Title="Action Windows" PickerIcon="fa-solid fa-desktop" />
+                break;
+
+            case StepType.Wake:
+                <p class="settings-hint settings-step-hint">Envoie le réveil au PC visé par ce bouton (adresse MAC du bouton, sinon celle du PC).</p>
+                break;
+
+            case StepType.WaitOnline:
+                <label class="settings-step-seconds">
+                    <span class="settings-label">Délai maximum (secondes)</span>
+                    <span class="settings-input settings-input-plain">
+                        <input type="number" min="5" max="1800" @bind="Step.Seconds" aria-label="Délai maximum en secondes" />
+                    </span>
+                </label>
+                <p class="settings-hint settings-step-hint">Continue dès que le serveur du PC répond. Échoue si le PC reste éteint.</p>
+                break;
+
+            case StepType.Delay:
+                <label class="settings-step-seconds">
+                    <span class="settings-label">Durée (secondes)</span>
+                    <span class="settings-input settings-input-plain">
+                        <input type="number" min="1" max="3600" @bind="Step.Seconds" aria-label="Durée en secondes" />
+                    </span>
+                </label>
+                break;
+        }
+    </div>
+
+    <div class="settings-step-actions">
+        <button type="button" class="settings-btn settings-btn-icon" @onclick="() => Move(-1)" disabled="@IsFirst" aria-label="Monter l'étape" title="Monter">
+            <i class="fa-solid fa-arrow-up"></i>
+        </button>
+        <button type="button" class="settings-btn settings-btn-icon" @onclick="() => Move(1)" disabled="@IsLast" aria-label="Descendre l'étape" title="Descendre">
+            <i class="fa-solid fa-arrow-down"></i>
+        </button>
+        <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="Remove" aria-label="Supprimer l'étape" title="Supprimer">
+            <i class="fa-solid fa-trash"></i>
+        </button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+    [Parameter, EditorRequired] public DeckButton Button { get; set; } = new();
+    [Parameter, EditorRequired] public SequenceStep Step { get; set; } = new();
+
+    private static readonly IReadOnlyList<ChoiceItem> TypeChoices = new List<ChoiceItem>
+    {
+        new(((int)StepType.Script).ToString(), "Lancer un script", "Un script du dossier Script du PC", "fa-solid fa-terminal"),
+        new(((int)StepType.PcAction).ToString(), "Action Windows", "Média, volume, verrouillage, extinction…", "fa-solid fa-desktop"),
+        new(((int)StepType.Wake).ToString(), "Réveiller le PC", "Envoie le paquet Wake-on-LAN", "fa-solid fa-power-off"),
+        new(((int)StepType.WaitOnline).ToString(), "Attendre que le PC réponde", "Utile après un réveil", "fa-solid fa-hourglass-half"),
+        new(((int)StepType.Delay).ToString(), "Pause", "Attend un nombre de secondes", "fa-solid fa-clock")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> CommandChoices = PcCommands.All
+        .Select(c => new ChoiceItem(c.Id, c.Label, c.Description, c.Icon))
+        .ToList();
+
+    private int Index => Button.Steps.IndexOf(Step);
+    private int Number => Index + 1;
+    private bool IsFirst => Index <= 0;
+    private bool IsLast => Index >= Button.Steps.Count - 1;
+    private string TypeValue => ((int)Step.Type).ToString();
+
+    private void SetType(string value)
+    {
+        if (!int.TryParse(value, out var number) || !Enum.IsDefined((StepType)number)) return;
+
+        Step.Type = (StepType)number;
+        Step.Seconds = Step.Type switch
+        {
+            StepType.WaitOnline => 120,
+            StepType.Delay => 5,
+            _ => Step.Seconds
+        };
+        State.Notify();
+    }
+
+    private void SetWait(bool value)
+    {
+        Step.WaitForEnd = value;
+        State.Notify();
+    }
+
+    private void SetCommand(string id)
+    {
+        Step.Command = id;
+        State.Notify();
+    }
+
+    private void Move(int delta)
+    {
+        var i = Index;
+        var j = i + delta;
+        if (i < 0 || j < 0 || j >= Button.Steps.Count) return;
+
+        (Button.Steps[i], Button.Steps[j]) = (Button.Steps[j], Button.Steps[i]);
+        State.Notify();
+    }
+
+    private void Remove()
+    {
+        Button.Steps.Remove(Step);
+        State.Notify();
+    }
+}

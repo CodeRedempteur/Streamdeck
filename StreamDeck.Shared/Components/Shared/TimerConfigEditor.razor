@@ -1,0 +1,178 @@
+@* v1.36 : réglages d'un minuteur/chronomètre — composant partagé, utilisé aussi bien par ButtonEditor (bouton de
+   type Timer, ou minuteur attaché à un bouton Script) que par la config du widget de bureau (StreamDeck.ScriptBuilder),
+   comme demandé ("même interphase... je l'aime bien"). ScriptChoices (facultatif) permet au contexte widget de
+   proposer un vrai sélecteur de script (il connaît la liste) ; côté téléphone, où la liste des scripts du PC n'est
+   pas connue, c'est un simple champ texte, comme pour le type Script normal. *@
+
+<div class="timercfg">
+    <div class="settings-kind" role="group" aria-label="Mode">
+        <button type="button" class="@SegmentClass(Config.Mode == TimerMode.Countdown)" @onclick="() => SetMode(TimerMode.Countdown)">
+            <i class="fa-solid fa-hourglass-half"></i><span>Compte à rebours</span>
+        </button>
+        <button type="button" class="@SegmentClass(Config.Mode == TimerMode.Chrono)" @onclick="() => SetMode(TimerMode.Chrono)">
+            <i class="fa-solid fa-stopwatch-20"></i><span>Chrono / Pomodoro</span>
+        </button>
+    </div>
+
+    @if (Config.Mode == TimerMode.Countdown && Config.Phases.Count == 1)
+    {
+        <ToggleSwitch Label="Durée demandée au clic" Description="Plutôt qu'une durée fixe réglée ici — pratique quand elle change à chaque fois (ex. un gâteau selon la recette)."
+                      Value="Config.PromptDuration" ValueChanged="SetPromptDuration" />
+    }
+
+    <div class="timercfg-phases">
+        <span class="settings-label">@(Config.Mode == TimerMode.Chrono ? "Phases (s'enchaînent dans l'ordre)" : "Décompte(s)")</span>
+
+        @foreach (var phase in Config.Phases)
+        {
+            <div class="timercfg-phase" @key="phase.Id">
+                <div class="timercfg-phase-head">
+                    <span class="settings-input settings-input-plain timercfg-phase-label">
+                        <input @bind="phase.Label" @bind:event="oninput" @bind:after="Changed" placeholder="Travail" autocomplete="off" spellcheck="false" />
+                    </span>
+                    @if (Config.Phases.Count > 1)
+                    {
+                        <button type="button" class="settings-btn settings-btn-sm" @onclick="() => RemovePhase(phase)" title="Supprimer cette phase">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    }
+                </div>
+
+                @if (!(Config.Mode == TimerMode.Countdown && Config.Phases.Count == 1 && Config.PromptDuration))
+                {
+                    <div class="timercfg-duration">
+                        <label class="timercfg-duration-field">
+                            <span>h</span>
+                            <NumberStepper Value="@Hours(phase)" ValueChanged="@(v => SetHours(phase, v))" Min="0" Max="23" />
+                        </label>
+                        <label class="timercfg-duration-field">
+                            <span>min</span>
+                            <NumberStepper Value="@Minutes(phase)" ValueChanged="@(v => SetMinutes(phase, v))" Min="0" Max="59" />
+                        </label>
+                        <label class="timercfg-duration-field">
+                            <span>s</span>
+                            <NumberStepper Value="@Seconds(phase)" ValueChanged="@(v => SetSeconds(phase, v))" Min="0" Max="59" />
+                        </label>
+                    </div>
+                }
+
+                <ChoiceField Label="À la fin" Items="SoundKindChoices" Value="@(((int)phase.SoundKind).ToString())" ValueChanged="@(v => SetSoundKind(phase, v))"
+                             PickerIcon="fa-solid fa-volume-high" />
+
+                @if (phase.SoundKind == TimerSoundKind.Script)
+                {
+                    @if (ScriptChoices is not null)
+                    {
+                        <ChoiceField Label="Script" Items="ScriptChoices" Value="@phase.SoundScript" ValueChanged="@(v => SetSoundScript(phase, v))"
+                                     PickerIcon="fa-solid fa-terminal" />
+                    }
+                    else
+                    {
+                        <label class="settings-field">
+                            <span class="settings-label">Nom du script</span>
+                            <span class="settings-input">
+                                <i class="fa-solid fa-terminal"></i>
+                                <input @bind="phase.SoundScript" @bind:after="Changed" placeholder="spotify-matin" autocomplete="off" spellcheck="false" />
+                            </span>
+                        </label>
+                    }
+                }
+            </div>
+        }
+
+        @if (Config.Mode == TimerMode.Chrono || !Config.PromptDuration)
+        {
+            <button type="button" class="settings-btn" @onclick="AddPhase"><i class="fa-solid fa-plus"></i><span>Ajouter une phase</span></button>
+        }
+    </div>
+
+    @if (Config.Phases.Count > 1 || Config.Mode == TimerMode.Chrono)
+    {
+        <ToggleSwitch Label="Répéter en boucle" Description="Recommence au début une fois la dernière phase terminée — ex. Pomodoro : Travail puis Pause, en boucle."
+                      Value="Config.Repeat" ValueChanged="SetRepeat" />
+    }
+
+    <div class="timercfg-display">
+        <span class="settings-label">Affichage du compte</span>
+        <div class="timercfg-display-toggles">
+            <label class="timercfg-check"><input type="checkbox" checked="@Config.ShowHours" @onchange="@(e => SetShowHours((bool)e.Value!))" /> Heures</label>
+            <label class="timercfg-check"><input type="checkbox" checked="@Config.ShowMinutes" @onchange="@(e => SetShowMinutes((bool)e.Value!))" /> Minutes</label>
+            <label class="timercfg-check"><input type="checkbox" checked="@Config.ShowSeconds" @onchange="@(e => SetShowSeconds((bool)e.Value!))" /> Secondes</label>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TimerConfig Config { get; set; } = new();
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    /// <summary>Fourni côté widget de bureau (liste des scripts connus) ; null côté téléphone (simple champ texte).</summary>
+    [Parameter] public IReadOnlyList<ChoiceItem>? ScriptChoices { get; set; }
+
+    private static readonly IReadOnlyList<ChoiceItem> SoundKindChoices = new List<ChoiceItem>
+    {
+        new(((int)TimerSoundKind.Alarm).ToString(), "Alarme", "Alarme par défaut, en boucle jusqu'à l'arrêt", "fa-solid fa-bell"),
+        new(((int)TimerSoundKind.Script).ToString(), "Lancer un script", "Ex. un script qui ouvre Spotify", "fa-solid fa-terminal"),
+        new(((int)TimerSoundKind.None).ToString(), "Rien", "Phase silencieuse", "fa-solid fa-volume-xmark")
+    };
+
+    private string SegmentClass(bool active) => active ? "settings-kind-btn is-active" : "settings-kind-btn";
+
+    private Task Changed() => OnChanged.InvokeAsync();
+
+    private void SetMode(TimerMode mode)
+    {
+        if (Config.Mode == mode) return;
+        Config.Mode = mode;
+        OnChanged.InvokeAsync();
+    }
+
+    private void SetPromptDuration(bool value)
+    {
+        Config.PromptDuration = value;
+        OnChanged.InvokeAsync();
+    }
+
+    private void SetRepeat(bool value)
+    {
+        Config.Repeat = value;
+        OnChanged.InvokeAsync();
+    }
+
+    private void SetShowHours(bool value) { Config.ShowHours = value; OnChanged.InvokeAsync(); }
+    private void SetShowMinutes(bool value) { Config.ShowMinutes = value; OnChanged.InvokeAsync(); }
+    private void SetShowSeconds(bool value) { Config.ShowSeconds = value; OnChanged.InvokeAsync(); }
+
+    private void AddPhase()
+    {
+        Config.Phases.Add(new TimerPhase { Label = Config.Mode == TimerMode.Chrono ? "Pause" : "Minuteur" });
+        OnChanged.InvokeAsync();
+    }
+
+    private void RemovePhase(TimerPhase phase)
+    {
+        Config.Phases.Remove(phase);
+        if (Config.Phases.Count == 0) Config.Phases.Add(new TimerPhase());
+        OnChanged.InvokeAsync();
+    }
+
+    private static int Hours(TimerPhase phase) => phase.DurationSeconds / 3600;
+    private static int Minutes(TimerPhase phase) => phase.DurationSeconds / 60 % 60;
+    private static int Seconds(TimerPhase phase) => phase.DurationSeconds % 60;
+
+    private void SetHours(TimerPhase phase, int value) { phase.DurationSeconds = value * 3600 + Minutes(phase) * 60 + Seconds(phase); OnChanged.InvokeAsync(); }
+    private void SetMinutes(TimerPhase phase, int value) { phase.DurationSeconds = Hours(phase) * 3600 + value * 60 + Seconds(phase); OnChanged.InvokeAsync(); }
+    private void SetSeconds(TimerPhase phase, int value) { phase.DurationSeconds = Hours(phase) * 3600 + Minutes(phase) * 60 + value; OnChanged.InvokeAsync(); }
+
+    private void SetSoundKind(TimerPhase phase, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((TimerSoundKind)n)) phase.SoundKind = (TimerSoundKind)n;
+        OnChanged.InvokeAsync();
+    }
+
+    private void SetSoundScript(TimerPhase phase, string value)
+    {
+        phase.SoundScript = value;
+        OnChanged.InvokeAsync();
+    }
+}

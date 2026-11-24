@@ -1,0 +1,40 @@
+@inject ScriptRunner Runner
+
+<div class="mediatile" style="@StyleValue">
+    <button type="button" class="mediatile-btn" @onclick="() => Send(PreviousId)" aria-label="Piste précédente" title="Précédent">
+        <i class="fa-solid fa-backward-step"></i>
+    </button>
+    <button type="button" class="mediatile-btn mediatile-btn-main" @onclick="() => Send(PlayPauseId)" aria-label="Lecture ou pause" title="Lecture / Pause">
+        <i class="fa-solid fa-play"></i>
+    </button>
+    <button type="button" class="mediatile-btn" @onclick="() => Send(NextId)" aria-label="Piste suivante" title="Suivant">
+        <i class="fa-solid fa-forward-step"></i>
+    </button>
+</div>
+
+@code {
+    private const string PreviousId = "media.prev";
+    private const string PlayPauseId = "media.playpause";
+    private const string NextId = "media.next";
+
+    [Parameter, EditorRequired] public DeckButton Button { get; set; } = new();
+    [Parameter, EditorRequired] public PcProfile Pc { get; set; } = new();
+
+    /// <summary>Levé après chaque commande (l'écran principal affiche le message et garde l'historique).</summary>
+    [Parameter] public EventCallback<RunResult> OnResult { get; set; }
+
+    private string StyleValue =>
+        $"--key-bg:{Button.Color};--key-fg:{ColorUtil.ContrastText(Button.Color)}";
+
+    private async Task Send(string commandId)
+    {
+        var command = PcCommands.Find(commandId);
+        if (command is null) return;
+
+        var result = await Runner.RunCommandAsync(Pc, command, command.Label);
+
+        // Les réussites restent discrètes : on ne signale que les problèmes.
+        if (!result.Ok || result.Warning)
+            await OnResult.InvokeAsync(result);
+    }
+}

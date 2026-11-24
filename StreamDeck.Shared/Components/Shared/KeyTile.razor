@@ -1,0 +1,60 @@
+@if (Interactive)
+{
+    <button type="button" class="@CssClass" style="@StyleValue" aria-label="@Button.Label" @onclick="OnClick">
+        <span class="keytile-icon">
+            @if (HasImage)
+            {
+                <img src="@Button.ImageUrl" alt="" class="keytile-image" />
+            }
+            else
+            {
+                <KeyIcon Icon="@Button.Icon" />
+            }
+        </span>
+        @if (ShowLabel)
+        {
+            <span class="keytile-label">@Button.Label</span>
+        }
+    </button>
+}
+else
+{
+    <span class="@CssClass" style="@StyleValue" aria-hidden="true">
+        <span class="keytile-icon">
+            @if (HasImage)
+            {
+                <img src="@Button.ImageUrl" alt="" class="keytile-image" />
+            }
+            else
+            {
+                <KeyIcon Icon="@Button.Icon" />
+            }
+        </span>
+        @if (ShowLabel)
+        {
+            <span class="keytile-label">@Button.Label</span>
+        }
+    </span>
+}
+
+@code {
+    [Parameter, EditorRequired] public DeckButton Button { get; set; } = new();
+
+    /// <summary>Classe d'état : is-busy, is-ok ou is-err.</summary>
+    [Parameter] public string State { get; set; } = string.Empty;
+
+    /// <summary>false = simple aperçu (non cliquable).</summary>
+    [Parameter] public bool Interactive { get; set; } = true;
+
+    [Parameter] public bool ShowLabel { get; set; } = true;
+
+    [Parameter] public EventCallback OnClick { get; set; }
+
+    private bool HasImage => !string.IsNullOrEmpty(Button.ImageUrl);
+
+    private string CssClass =>
+        (Interactive ? $"keytile {State}" : "keytile keytile-static") + (Button.Enabled ? "" : " is-off");
+
+    private string StyleValue =>
+        $"--key-bg:{Button.Color};--key-fg:{ColorUtil.ContrastText(Button.Color)}";
+}

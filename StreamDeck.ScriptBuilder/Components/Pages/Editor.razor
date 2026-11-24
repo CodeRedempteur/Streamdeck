@@ -1,0 +1,503 @@
+@page "/editor"
+@inject EditorSession Session
+@inject ScriptStore Store
+@inject ScheduleStore Schedules
+@inject ScriptTester Tester
+@inject NavigationManager Nav
+@inject BuilderConfigService Config
+
+<div class="ed">
+    <header class="ed-bar">
+        <button type="button" class="settings-btn settings-btn-icon" @onclick="Back" aria-label="Retour" title="Retour à mes scripts"><i class="fa-solid fa-arrow-left"></i></button>
+
+        <span class="settings-input ed-name">
+            <i class="fa-solid fa-scroll"></i>
+            <input @bind="Project.Name" @bind:event="oninput" @bind:after="Changed" placeholder="Nom du script (ex : ceres)" autocomplete="off" spellcheck="false" aria-label="Nom du script" />
+        </span>
+
+        <div class="ed-bar-actions">
+            <button type="button" class="settings-btn" @onclick="SaveAndTest" disabled="@_busy"><i class="fa-solid fa-play"></i><span>Enregistrer et tester</span></button>
+            <button type="button" class="settings-btn settings-btn-primary" @onclick="Save" disabled="@_busy"><i class="fa-solid fa-floppy-disk"></i><span>Enregistrer</span></button>
+        </div>
+    </header>
+
+    @if (_notice is not null)
+    {
+        <p class="@(_noticeOk ? "settings-test-result is-ok" : "settings-test-result is-err")">
+            <i class="@(_noticeOk ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_notice</span>
+        </p>
+    }
+
+    @if (!Store.HasServerFolder)
+    {
+        <p class="settings-test-result is-err"><i class="fa-solid fa-circle-xmark"></i><span>Le dossier du serveur n'est pas configuré. <a href="settings">Ouvrir les réglages</a></span></p>
+    }
+
+    <div class="@(_previewOpen ? "ed-body" : "ed-body is-wide")">
+        <section class="ed-steps" aria-label="Actions du script" tabindex="-1" @onkeydown="OnEditorKeyDown">
+            <div class="ed-meta">
+                <ChoiceField Label="Dossier" Items="_folderChoices" Value="@FolderValue" ValueChanged="SetFolder" PickerIcon="fa-solid fa-folder" />
+                <label class="settings-field">
+                    <span class="settings-label">Description (facultative)</span>
+                    <span class="settings-input settings-input-plain">
+                        <input @bind="Project.Description" @bind:event="oninput" @bind:after="Changed" placeholder="À quoi sert ce script ?" autocomplete="off" />
+                    </span>
+                </label>
+            </div>
+
+            @{ var discoveredVars = ScriptGenerator.DiscoverVariableNames(Project); }
+            @if (Project.Variables.Count > 0 || discoveredVars.Count > 0)
+            {
+                <div class="ed-variables">
+                    <span class="settings-label">Variables ({nom} dans une URL ou des arguments, ci-dessous)</span>
+                    @foreach (var v in Project.Variables)
+                    {
+                        <div class="settings-variable">
+                            <div class="settings-variable-head">
+                                <span class="settings-input settings-input-plain settings-variable-name">
+                                    <input @bind="v.Name" @bind:event="oninput" @bind:after="Changed" placeholder="nom (ex : season)" autocomplete="off" spellcheck="false" />
+                                </span>
+                                <ChoiceField Items="VarKindChoices" Value="@(((int)v.Kind).ToString())" ValueChanged="@(val => SetVarKind(v, val))" PickerIcon="fa-solid fa-shapes" />
+                                <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveVariable(v)" aria-label="Supprimer cette variable" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+                            @if (v.Kind == VariableKind.Number)
+                            {
+                                <div class="settings-variable-bounds">
+                                    <label>Min <input type="number" @bind="v.Min" @bind:event="oninput" @bind:after="Changed" /></label>
+                                    <label>Max <input type="number" @bind="v.Max" @bind:event="oninput" @bind:after="Changed" /></label>
+                                </div>
+                            }
+                            else
+                            {
+                                <label class="settings-variable-bounds">Longueur max <input type="number" @bind="v.MaxLength" @bind:event="oninput" @bind:after="Changed" min="1" max="500" /></label>
+                            }
+                            @if (v.Name.Length > 0 && !discoveredVars.Contains(v.Name))
+                            {
+                                <p class="settings-hint">« @v.Name » n'apparaît dans le texte d'aucune étape pour l'instant — sans effet tant que ce n'est pas le cas.</p>
+                            }
+                        </div>
+                    }
+
+                    @{ var undeclared = discoveredVars.Where(n => !Project.Variables.Any(v => v.Name == n)).ToList(); }
+                    @if (undeclared.Count > 0)
+                    {
+                        <p class="settings-hint">Trouvées dans le texte, pas encore déclarées :</p>
+                        <div class="ed-variables-undeclared">
+                            @foreach (var name in undeclared)
+                            {
+                                <button type="button" class="settings-btn" @onclick="() => DeclareVariable(name)"><i class="fa-solid fa-plus"></i><span>@name</span></button>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (Store.Exists(Project.Route))
+            {
+                <div class="ed-variables">
+                    <span class="settings-label">Planification (le serveur déclenche seul ce script, sans le Stream Deck)</span>
+                    @foreach (var rule in _schedules)
+                    {
+                        <div class="settings-variable">
+                            <div class="settings-variable-head">
+                                <ToggleSwitch Label="@(rule.Enabled ? "Active" : "En pause")" Value="rule.Enabled" ValueChanged="@(v => SetScheduleEnabled(rule, v))" />
+                                <ChoiceField Items="ScheduleModeChoices" Value="@rule.Mode.ToString()" ValueChanged="@(v => SetScheduleMode(rule, v))" PickerIcon="fa-solid fa-clock" />
+                                <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveSchedule(rule)" aria-label="Supprimer cette planification" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+
+                            @if (rule.Mode == ScheduleMode.Interval)
+                            {
+                                <div class="settings-variable-bounds">
+                                    <label>Toutes les <input type="number" min="1" max="1440" @bind="rule.IntervalMinutes" @bind:event="oninput" @bind:after="() => SaveSchedule(rule)" /> minutes</label>
+                                </div>
+                                <div class="settings-variable-bounds">
+                                    <label>De <input type="text" placeholder="08:00" pattern="^\d{1,2}:\d{2}$" @bind="rule.ActiveFrom" @bind:event="oninput" @bind:after="() => SaveSchedule(rule)" /></label>
+                                    <label>à <input type="text" placeholder="20:00" pattern="^\d{1,2}:\d{2}$" @bind="rule.ActiveTo" @bind:event="oninput" @bind:after="() => SaveSchedule(rule)" /></label>
+                                </div>
+                                <p class="settings-hint">Laisse les deux heures vides pour une plage active toute la journée.</p>
+                            }
+                            else
+                            {
+                                <label class="settings-variable-bounds">
+                                    Heures (une par ligne, HH:mm)
+                                    <textarea rows="3" spellcheck="false" value="@string.Join('\n', rule.Times)" @onchange="@(e => SetScheduleTimes(rule, (string?)e.Value))"></textarea>
+                                </label>
+                            }
+
+                            <div class="settings-variable-bounds">
+                                <label>Répéter <input type="number" min="1" max="50" @bind="rule.Repeat" @bind:event="oninput" @bind:after="() => SaveSchedule(rule)" /> fois</label>
+                                @if (rule.Repeat > 1)
+                                {
+                                    <label>avec <input type="number" min="0" max="3600" @bind="rule.RepeatDelaySeconds" @bind:event="oninput" @bind:after="() => SaveSchedule(rule)" /> s d'attente entre chaque</label>
+                                }
+                            </div>
+
+                            @if (rule.LastFiredUtc is { } last)
+                            {
+                                <p class="settings-hint">Dernier déclenchement : @last.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</p>
+                            }
+                        </div>
+                    }
+
+                    <button type="button" class="settings-btn" @onclick="AddSchedule"><i class="fa-solid fa-plus"></i><span>Ajouter une planification</span></button>
+                    <div class="settings-hint-row"><InfoHint>Fonctionne même une fois l'application fermée : c'est le serveur (server.ps1), toujours lancé sur le PC, qui vérifie et déclenche.</InfoHint></div>
+                </div>
+            }
+            else if (Project.Steps.Count > 0)
+            {
+                <p class="settings-hint">Enregistre d'abord ce script pour pouvoir le planifier.</p>
+            }
+
+            @if (Project.Steps.Count == 0)
+            {
+                <div class="ed-empty">
+                    <i class="fa-solid fa-list-check"></i>
+                    <p>Aucune action. Ajoute-en une pour commencer : ouvrir un programme, le mettre en plein écran, régler le volume…</p>
+                </div>
+            }
+
+            @if (Project.Steps.Count > 1)
+            {
+                <div class="ed-tools">
+                    <span>@Project.Steps.Count actions</span>
+                    <button type="button" class="ed-tool" @onclick="CollapseAll"><i class="fa-solid fa-chevron-up"></i><span>Tout replier</span></button>
+                    <button type="button" class="ed-tool" @onclick="ExpandAll"><i class="fa-solid fa-chevron-down"></i><span>Tout déplier</span></button>
+                </div>
+            }
+
+            @for (var i = 0; i < Project.Steps.Count; i++)
+            {
+                var step = Project.Steps[i];
+                var index = i;
+                <StepCard @key="step.Id" Step="step" Index="index" Count="Project.Steps.Count"
+                          Collapsed="_collapsed.Contains(step.Id)" OnToggleCollapsed="() => ToggleCollapsed(step.Id)"
+                          OnChanged="Changed" OnMove="d => Move(index, d)" OnRemove="() => Remove(index)" OnDuplicate="() => Duplicate(index)" />
+            }
+
+            <button type="button" class="ed-add" @onclick="() => _addOpen = true">
+                <i class="fa-solid fa-plus"></i><span>Ajouter une action</span>
+            </button>
+        </section>
+
+        <aside class="ed-side">
+            <CodePreview Code="@Code" Open="_previewOpen" OnToggle="() => _previewOpen = !_previewOpen" />
+            @if (_previewOpen)
+            {
+            <div class="settings-hint-row"><InfoHint>Ce script est enregistré dans <code>@(Store.HasServerFolder ? Store.ScriptsDir : "le dossier Script du serveur")</code>. Dans Stream Deck, utilise un bouton <strong>Script</strong> nommé <strong>@(string.IsNullOrWhiteSpace(Project.Name) ? "…" : Project.Route)</strong>.</InfoHint></div>
+            }
+        </aside>
+    </div>
+</div>
+
+<ChoicePicker Open="_addOpen" Title="Ajouter une action" Icon="fa-solid fa-plus" Items="StepChoices" OnPick="Add" OnClose="() => _addOpen = false" />
+
+<TestResultPanel Open="_testOpen" Name="@Project.Route" Result="_testResult" OnClose="() => _testOpen = false" />
+
+<Modal Open="_confirmOverwrite" Title="Remplacer le script ?" Icon="fa-solid fa-triangle-exclamation" Size="narrow" OnClose="() => _confirmOverwrite = false">
+    <ChildContent>
+        <p>Un script nommé « <strong>@Project.Route</strong> » existe déjà dans le dossier du serveur. Le remplacer ?</p>
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="() => _confirmOverwrite = false">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-danger" @onclick="ConfirmOverwrite"><i class="fa-solid fa-floppy-disk"></i><span>Remplacer</span></button>
+    </Footer>
+</Modal>
+
+<Modal Open="_confirmLeave" Title="Quitter sans enregistrer ?" Icon="fa-solid fa-triangle-exclamation" Size="narrow" OnClose="() => _confirmLeave = false">
+    <ChildContent>
+        <p>Les modifications de ce script ne sont pas enregistrées.</p>
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="() => _confirmLeave = false">Rester</button>
+        <button type="button" class="settings-btn settings-btn-danger" @onclick="Leave"><i class="fa-solid fa-right-from-bracket"></i><span>Quitter</span></button>
+    </Footer>
+</Modal>
+
+@code {
+    private static readonly IReadOnlyList<ChoiceItem> StepChoices =
+        StepCatalog.All.Select(i => new ChoiceItem(i.Kind.ToString(), i.Title, i.Description, i.Icon)).ToList();
+
+    private ScriptProject Project => Session.Project;
+
+    private IReadOnlyList<ChoiceItem> _folderChoices = Array.Empty<ChoiceItem>();
+
+    private string FolderValue => Project.Folder.Length == 0 ? "/" : Project.Folder;
+
+    protected override void OnInitialized()
+    {
+        var folders = Store.HasServerFolder ? Store.ListFolders().Select(f => f.Path).ToList() : new List<string>();
+        // rien de plus ici : la ligne suivante recalcule aussi les dossiers déjà connus du projet
+        if (Project.Folder.Length > 0 && !folders.Contains(Project.Folder, StringComparer.OrdinalIgnoreCase)) folders.Add(Project.Folder);
+
+        _folderChoices = new[] { new ChoiceItem("/", "Script (racine)", "Pas de dossier", "fa-solid fa-house") }
+            .Concat(folders.OrderBy(f => f, StringComparer.CurrentCultureIgnoreCase)
+                .Select(f => new ChoiceItem(f, f, null, "fa-solid fa-folder")))
+            .ToList();
+
+        RefreshSchedules();
+    }
+
+    private void SetFolder(string value)
+    {
+        Project.Folder = value == "/" ? string.Empty : value;
+        Changed();
+    }
+
+    // ----- Variables de script ({season}, {episode}...) -----
+
+    private static readonly IReadOnlyList<ChoiceItem> VarKindChoices = new List<ChoiceItem>
+    {
+        new(((int)VariableKind.Number).ToString(), "Nombre", null, "fa-solid fa-hashtag"),
+        new(((int)VariableKind.Text).ToString(), "Texte", null, "fa-solid fa-font")
+    };
+
+    private void SetVarKind(ScriptVariable v, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((VariableKind)n)) v.Kind = (VariableKind)n;
+        Changed();
+    }
+
+    private void RemoveVariable(ScriptVariable v)
+    {
+        Project.Variables.Remove(v);
+        Changed();
+    }
+
+    private void DeclareVariable(string name)
+    {
+        if (Project.Variables.Any(v => v.Name == name)) return;
+        Project.Variables.Add(new ScriptVariable { Name = name });
+        Changed();
+    }
+
+    // ----- Planification (déclenchement automatique par le serveur) -----
+
+    private static readonly IReadOnlyList<ChoiceItem> ScheduleModeChoices = new List<ChoiceItem>
+    {
+        new(ScheduleMode.Interval.ToString(), "Toutes les X minutes", null, "fa-solid fa-repeat"),
+        new(ScheduleMode.DailyTimes.ToString(), "À heures fixes", null, "fa-solid fa-clock")
+    };
+
+    private List<ScheduleRule> _schedules = new();
+
+    private void RefreshSchedules() => _schedules = Store.Exists(Project.Route) ? Schedules.ListFor(Project.Route).ToList() : new List<ScheduleRule>();
+
+    private void AddSchedule()
+    {
+        try
+        {
+            Schedules.Create(Project.Route);
+            RefreshSchedules();
+        }
+        catch (Exception ex) { Fail(ex.Message); }
+    }
+
+    private void RemoveSchedule(ScheduleRule rule)
+    {
+        Schedules.Delete(rule.Id);
+        RefreshSchedules();
+    }
+
+    /// <summary>« 8:00 » -> « 08:00 » (comparé tel quel, en texte, à l'heure du serveur) ; vide ou invalide -> vide.</summary>
+    private static string NormalizeTime(string? value)
+    {
+        var t = (value ?? string.Empty).Trim();
+        if (t.Length == 0) return "";
+        return System.Text.RegularExpressions.Regex.IsMatch(t, @"^\d{1,2}:\d{2}$") ? (t.Length == 4 ? "0" + t : t) : "";
+    }
+
+    private void SaveSchedule(ScheduleRule rule)
+    {
+        rule.ActiveFrom = NormalizeTime(rule.ActiveFrom);
+        rule.ActiveTo = NormalizeTime(rule.ActiveTo);
+        try { Schedules.Save(rule); }
+        catch (Exception ex) { Fail(ex.Message); }
+    }
+
+    private void SetScheduleEnabled(ScheduleRule rule, bool value)
+    {
+        rule.Enabled = value;
+        SaveSchedule(rule);
+    }
+
+    private void SetScheduleMode(ScheduleRule rule, string value)
+    {
+        if (Enum.TryParse<ScheduleMode>(value, out var mode)) rule.Mode = mode;
+        SaveSchedule(rule);
+    }
+
+    private void SetScheduleTimes(ScheduleRule rule, string? text)
+    {
+        rule.Times = (text ?? string.Empty).Replace("\r", "").Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => System.Text.RegularExpressions.Regex.IsMatch(l, @"^\d{1,2}:\d{2}$"))
+            .Select(l => l.Length == 4 ? "0" + l : l)
+            .Distinct()
+            .OrderBy(l => l, StringComparer.Ordinal)
+            .ToList();
+        SaveSchedule(rule);
+    }
+
+    private string Code => ScriptGenerator.Generate(Project, Config.Current.PhoneTargets, Config.Current.DefaultPhoneId);
+
+    private readonly HashSet<Guid> _collapsed = new();
+    private bool _previewOpen = true;
+    private bool _addOpen;
+    private bool _busy;
+    private bool _dirty;
+    private bool _testOpen;
+    private TestResult? _testResult;
+    private bool _confirmOverwrite;
+    private bool _confirmLeave;
+    private string? _notice;
+    private bool _noticeOk;
+
+    private void ToggleCollapsed(Guid id)
+    {
+        if (!_collapsed.Remove(id)) _collapsed.Add(id);
+    }
+
+    private void CollapseAll() => _collapsed.UnionWith(Project.Steps.Select(s => s.Id));
+    private void ExpandAll() => _collapsed.Clear();
+
+    private void Changed()
+    {
+        _dirty = true;
+        _notice = null;
+    }
+
+    /// <summary>Raccourcis « ajout rapide » (Réglages) : ajoute directement une action sans passer par le menu.
+    /// N'empêche jamais le comportement par défaut de la touche (taper dans un champ reste possible) — seules les
+    /// combinaisons qui matchent effectivement un raccourci réglé ont un effet, les autres frappes sont ignorées ici.</summary>
+    private void OnEditorKeyDown(KeyboardEventArgs e)
+    {
+        var combo = HotkeyKeys.FromKeyboardEvent(e.CtrlKey, e.AltKey, e.ShiftKey, e.MetaKey, e.Key);
+        if (combo is null) return;
+
+        var text = HotkeyKeys.Format(combo);
+        var match = Config.Current.QuickAddShortcuts.FirstOrDefault(q => q.Enabled && string.Equals(q.Keys, text, StringComparison.OrdinalIgnoreCase));
+        if (match is not null) Add(match.Kind.ToString());
+    }
+
+    private void Add(string kind)
+    {
+        _addOpen = false;
+        if (!Enum.TryParse<StepKind>(kind, out var k)) return;
+
+        var step = new ScriptStep { Kind = k };
+        if (k == StepKind.Window) step.Window = new WindowOptions { Enabled = true, State = WindowState.Maximize };
+        Project.Steps.Add(step);
+        Changed();
+    }
+
+    private void Move(int index, int delta)
+    {
+        var target = index + delta;
+        if (target < 0 || target >= Project.Steps.Count) return;
+
+        (Project.Steps[index], Project.Steps[target]) = (Project.Steps[target], Project.Steps[index]);
+        Changed();
+    }
+
+    private void Remove(int index)
+    {
+        Project.Steps.RemoveAt(index);
+        Changed();
+    }
+
+    private void Duplicate(int index)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(Project.Steps[index]);
+        var copy = System.Text.Json.JsonSerializer.Deserialize<ScriptStep>(json)!;
+        copy.Id = Guid.NewGuid();
+        Project.Steps.Insert(index + 1, copy);
+        Changed();
+    }
+
+    private void Back()
+    {
+        if (_dirty) _confirmLeave = true;
+        else Leave();
+    }
+
+    private void Leave()
+    {
+        _confirmLeave = false;
+        Nav.NavigateTo("");
+    }
+
+    private void Fail(string message)
+    {
+        _notice = message;
+        _noticeOk = false;
+    }
+
+    /// <summary>Enregistre le script. Renvoie false si rien n'a été écrit (erreur ou confirmation attendue).</summary>
+    private bool TrySave(bool overwriteConfirmed)
+    {
+        _notice = null;
+
+        var nameError = ScriptStore.NameError(Project.Name) ?? ScriptStore.FolderError(Project.Folder);
+        if (nameError is not null) { Fail(nameError); return false; }
+        if (!Store.HasServerFolder) { Fail("Configure d'abord le dossier du serveur (Réglages)."); return false; }
+        if (Project.Steps.Count == 0) { Fail("Ajoute au moins une action."); return false; }
+        if (Project.Steps.Any(s => StepValidator.HasErrors(s)))
+        {
+            Fail("Corrige d'abord les actions marquées en rouge.");
+            return false;
+        }
+
+        var name = Project.Name.Trim();
+        var renamed = !Session.IsNew && !string.Equals(name, Session.OriginalName, StringComparison.OrdinalIgnoreCase);
+
+        if (Store.Exists(name) && (Session.IsNew || renamed) && !overwriteConfirmed)
+        {
+            _confirmOverwrite = true;
+            return false;
+        }
+
+        try
+        {
+            var path = Store.Save(Project, overwrite: true);
+            var previous = Session.OriginalName;
+            if (renamed)
+            {
+                Schedules.RenameScript(previous, name);
+                if (Store.Exists(previous)) Store.Delete(previous);
+            }
+
+            Session.MarkSaved();
+            RefreshSchedules();
+            _dirty = false;
+            _notice = renamed ? $"Enregistré sous le nouveau nom : {path}" : $"Enregistré : {path}";
+            _noticeOk = true;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Fail(ex.Message);
+            return false;
+        }
+    }
+
+    private void Save() => TrySave(overwriteConfirmed: false);
+
+    private void ConfirmOverwrite()
+    {
+        _confirmOverwrite = false;
+        TrySave(overwriteConfirmed: true);
+    }
+
+    private async Task SaveAndTest()
+    {
+        if (!TrySave(overwriteConfirmed: false)) return;
+
+        _busy = true;
+        _testResult = null;
+        _testOpen = true;
+        StateHasChanged();
+
+        _testResult = await Tester.RunAsync(Store.PathFor(Project.Name));
+        _busy = false;
+    }
+}

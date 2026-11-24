@@ -1,0 +1,176 @@
+@inject IAppPlatform Platform
+@inject ConfigService Config
+
+@* v1.34.12/v1.35 : demandé explicitement "un settings tout en bas" — placée après BackupSection dans Settings.razor
+   (voir ce fichier), donc tout en bas de l'écran de réglages, plutôt que dans VoiceSection plus haut. Regroupe les
+   deux points demandés : déclencheur vocal dédié pour "Retrouver mon téléphone" (indépendant de tout bouton posé
+   sur une page — voir VoiceSettings/VoiceListenerService), et sonneries locales (mp3...) ajoutées depuis l'appareil. *@
+@if (Platform.CanFindPhone || Platform.CanPickAudioFile)
+{
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-phone-volume"></i></span>
+            <div>
+                <h2>Retrouver mon téléphone</h2>
+                <p>Déclencheur vocal dédié et sonneries personnalisées — indépendant des boutons posés sur une page.</p>
+            </div>
+        </div>
+
+        @if (Platform.CanFindPhone)
+        {
+            <ToggleSwitch Label="Commande vocale dédiée" Description="Reconnue même si aucun bouton « Retrouver le téléphone » n'est posé sur une page (nécessite l'écoute vocale activée ci-dessus)."
+                          Value="State.Cfg.Voice.FindPhoneVoiceEnabled" ValueChanged="SetFindPhoneVoiceEnabled" />
+
+            @if (State.Cfg.Voice.FindPhoneVoiceEnabled)
+            {
+                <label class="settings-field">
+                    <span class="settings-label">Phrase reconnue</span>
+                    <span class="settings-input">
+                        <i class="fa-solid fa-comment-dots"></i>
+                        <input @bind="FindPhoneTriggerValue" @bind:event="oninput" placeholder="ex : retrouve mon telephone" autocomplete="off" spellcheck="false" />
+                    </span>
+                </label>
+
+                @* v1.34.13 : demandé explicitement — enregistrer la phrase à la voix, comme pour les boutons
+                   (ButtonEditor.razor/RecordTrigger), plutôt que de devoir la taper. Remplace le texte reconnu tel
+                   quel (un seul champ ici, pas une liste comme pour les boutons). *@
+                <button type="button" class="settings-btn @(_listening ? "is-listening" : "")" @onclick="RecordFindPhoneTrigger" disabled="@_listening" title="Dis la phrase à voix haute, elle remplacera le texte ci-dessus">
+                    <i class="@(_listening ? "fa-solid fa-ear-listen" : "fa-solid fa-microphone-lines")"></i><span>@(_listening ? "Écoute..." : "Enregistrer à la voix")</span>
+                </button>
+
+                <ToggleSwitch Label="Nécessite le mot de réveil" Description="Désactivé : reconnue à tout moment, sans dire le mot de réveil d'abord."
+                              Value="State.Cfg.Voice.FindPhoneVoiceRequiresWakeWord" ValueChanged="SetFindPhoneRequiresWakeWord" />
+            }
+        }
+
+        @if (Platform.CanPickAudioFile)
+        {
+            <div class="settings-field">
+                <span class="settings-label">Sonneries (fichiers audio locaux)</span>
+
+                @if (State.Cfg.Voice.CustomRingtoneFiles.Count == 0)
+                {
+                    <p class="settings-hint">Aucune sonnerie ajoutée — la sonnerie d'alarme par défaut de l'appareil est utilisée.</p>
+                }
+                else
+                {
+                    <div class="settings-list">
+                        <button type="button" class="settings-list-item @(string.IsNullOrEmpty(State.Cfg.Voice.SelectedRingtoneFile) ? "is-active" : "")" @onclick="() => SelectRingtone(null)">
+                            <i class="fa-solid @(string.IsNullOrEmpty(State.Cfg.Voice.SelectedRingtoneFile) ? "fa-circle-check" : "fa-circle")"></i>
+                            <span>Sonnerie par défaut de l'appareil</span>
+                        </button>
+                        @foreach (var file in State.Cfg.Voice.CustomRingtoneFiles)
+                        {
+                            <div class="settings-list-item @(file == State.Cfg.Voice.SelectedRingtoneFile ? "is-active" : "")">
+                                <button type="button" class="settings-list-item-main" @onclick="() => SelectRingtone(file)">
+                                    <i class="fa-solid @(file == State.Cfg.Voice.SelectedRingtoneFile ? "fa-circle-check" : "fa-circle")"></i>
+                                    <span>@file</span>
+                                </button>
+                                <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveRingtone(file)" aria-label="Retirer" title="Retirer">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <button type="button" class="settings-btn" @onclick="AddRingtone" disabled="@_picking">
+                    <i class="fa-solid fa-file-audio"></i><span>@(_picking ? "Choix en cours…" : "Ajouter un fichier audio (mp3...)")</span>
+                </button>
+                <p class="settings-hint">
+                    Utilisée par « Retrouver le téléphone » (bouton ou commande vocale) — ou pour une future
+                    implémentation (sonnerie d'appel, alertes...). Le fichier choisi est copié dans l'application.
+                </p>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    private bool _picking;
+    private bool _listening;
+
+    /// <summary>Même logique que ButtonEditor.RecordTrigger (met en pause l'écoute continue le temps d'enregistrer,
+    /// la relance ensuite si elle était active), mais remplace le champ unique au lieu d'ajouter à une liste.</summary>
+    private async Task RecordFindPhoneTrigger()
+    {
+        var wasListening = Config.Current.Voice.Enabled;
+        if (wasListening)
+        {
+            await Platform.SetVoiceListeningAsync(false);
+            await Task.Delay(400);
+        }
+
+        _listening = true;
+        State.Notify();
+
+        string? heard = null;
+        try { heard = await Platform.RecognizeSpeechOnceAsync(); }
+        finally
+        {
+            _listening = false;
+            if (wasListening) await Platform.SetVoiceListeningAsync(true);
+        }
+
+        if (!string.IsNullOrWhiteSpace(heard))
+        {
+            State.Cfg.Voice.FindPhoneVoiceTrigger = heard.Trim();
+            State.Notify();
+        }
+    }
+
+    private string FindPhoneTriggerValue
+    {
+        get => State.Cfg.Voice.FindPhoneVoiceTrigger;
+        set { State.Cfg.Voice.FindPhoneVoiceTrigger = value; State.Notify(); }
+    }
+
+    private void SetFindPhoneVoiceEnabled(bool value)
+    {
+        State.Cfg.Voice.FindPhoneVoiceEnabled = value;
+        State.Notify();
+    }
+
+    private void SetFindPhoneRequiresWakeWord(bool value)
+    {
+        State.Cfg.Voice.FindPhoneVoiceRequiresWakeWord = value;
+        State.Notify();
+    }
+
+    private async Task AddRingtone()
+    {
+        if (_picking) return;
+        _picking = true;
+        State.Notify();
+
+        try
+        {
+            var fileName = await Platform.PickAudioFileAsync();
+            if (fileName is not null)
+            {
+                State.Cfg.Voice.CustomRingtoneFiles.Add(fileName);
+                State.Cfg.Voice.SelectedRingtoneFile ??= fileName;
+            }
+        }
+        finally
+        {
+            _picking = false;
+            State.Notify();
+        }
+    }
+
+    private void RemoveRingtone(string file)
+    {
+        State.Cfg.Voice.CustomRingtoneFiles.Remove(file);
+        if (State.Cfg.Voice.SelectedRingtoneFile == file) State.Cfg.Voice.SelectedRingtoneFile = null;
+        State.Notify();
+    }
+
+    private void SelectRingtone(string? file)
+    {
+        State.Cfg.Voice.SelectedRingtoneFile = file;
+        State.Notify();
+    }
+}

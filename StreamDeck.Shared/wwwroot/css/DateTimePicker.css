@@ -1,0 +1,43 @@
+/* DateTimePickerModal (v1.34.7) : sélecteur de date/heure "maison", en 4 étapes (jour, mois, année, heure) — voir
+   la remarque en tête de DateTimePickerModal.razor. Mêmes tons/variables que le reste de l'appli (ChoicePicker.css). */
+
+.dtpicker { display: flex; flex-direction: column; gap: 12px; }
+
+.dtpicker-steps { display: flex; gap: 6px; flex-wrap: wrap; }
+.dtpicker-step {
+  flex: 1; min-width: 70px; padding: 8px 6px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(255, 255, 255, .03); color: var(--muted); font: inherit; font-size: .82rem; cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.dtpicker-step:hover { background: rgba(255, 255, 255, .07); }
+.dtpicker-step.is-active { border-color: rgba(79, 140, 255, .55); background: rgba(79, 140, 255, .14); color: var(--text); font-weight: 600; }
+
+.dtpicker-grid { display: grid; gap: 6px; }
+.dtpicker-grid-days { grid-template-columns: repeat(7, 1fr); }
+.dtpicker-grid-months { grid-template-columns: repeat(3, 1fr); }
+.dtpicker-grid-years { grid-template-columns: repeat(4, 1fr); }
+.dtpicker-grid-hours { grid-template-columns: repeat(6, 1fr); }
+.dtpicker-grid-minutes { grid-template-columns: repeat(6, 1fr); }
+
+.dtpicker-cell {
+  padding: 10px 4px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .03);
+  color: var(--text); font: inherit; font-size: .88rem; cursor: pointer; text-align: center;
+  transition: background .15s ease, border-color .15s ease;
+}
+.dtpicker-cell:hover { background: rgba(255, 255, 255, .07); border-color: var(--line-strong); }
+.dtpicker-cell.is-selected { border-color: rgba(79, 140, 255, .55); background: rgba(79, 140, 255, .14); font-weight: 600; }
+.dtpicker-cell.is-disabled { opacity: .3; pointer-events: none; }
+
+.dtpicker-year-row { display: flex; align-items: center; justify-content: center; gap: 12px; }
+
+/* v1.34.9 : réglage fin ±1 minute à côté de la grille (paliers de 5) — pouvoir tomber pile sur une minute précise. */
+.dtpicker-minute-precise {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .03);
+  font-size: .85rem; color: var(--muted);
+}
+
+.dtpicker-summary {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px;
+  background: rgba(79, 140, 255, .1); color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums;
+}

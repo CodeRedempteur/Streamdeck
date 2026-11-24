@@ -1,0 +1,152 @@
+@implements IDisposable
+@inject ScriptRunner Runner
+
+<div class="voltile" style="@StyleValue">
+    <button type="button" class="voltile-mute" @onclick="ToggleMuteAsync" aria-label="Couper ou remettre le son" title="Muet" disabled="@(!_loaded)">
+        <i class="@MuteIcon"></i>
+    </button>
+
+    <input type="range" class="voltile-range" min="0" max="100" step="1"
+           value="@_shown" disabled="@(!_loaded)" aria-label="Volume"
+           @oninput="OnInput" @onchange="OnCommit" />
+
+    <span class="voltile-value" title="@(_estimated ? "Niveau estimé : le PC est piloté par les touches volume du clavier" : null)">@LevelText</span>
+</div>
+
+@code {
+    private static readonly TimeSpan SendEvery = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan RefreshEvery = TimeSpan.FromSeconds(15);
+
+    [Parameter, EditorRequired] public DeckButton Button { get; set; } = new();
+    [Parameter, EditorRequired] public PcProfile Pc { get; set; } = new();
+
+    /// <summary>Levé quand le PC ne répond pas (pour que l'écran principal affiche un message).</summary>
+    [Parameter] public EventCallback<RunResult> OnResult { get; set; }
+
+    private readonly CancellationTokenSource _cts = new();
+    private bool _loaded;
+    private bool _muted;
+    private bool _estimated;
+    private int _level;
+
+    // Valeur écrite dans le curseur : elle ne change pas pendant qu'on le fait glisser (sinon il « saute »).
+    private int _shown;
+    private DateTime _lastSent = DateTime.MinValue;
+    private Guid _pcId;
+
+    private string StyleValue =>
+        $"--key-bg:{Button.Color};--key-fg:{ColorUtil.ContrastText(Button.Color)}";
+
+    private string MuteIcon => _muted || _level == 0
+        ? "fa-solid fa-volume-xmark"
+        : _level < 40 ? "fa-solid fa-volume-low" : "fa-solid fa-volume-high";
+
+    private string LevelText => !_loaded ? "--" : _muted ? "Muet" : _estimated ? $"~{_level} %" : $"{_level} %";
+
+    protected override void OnInitialized() => _ = LoopAsync(_cts.Token);
+
+    protected override void OnParametersSet()
+    {
+        // Autre PC (changement d'espace) : on relit son volume.
+        if (_pcId != Pc.Id)
+        {
+            _pcId = Pc.Id;
+            _loaded = false;
+            _ = RefreshAsync();
+        }
+    }
+
+    private async Task LoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(RefreshEvery, ct);
+                await RefreshAsync();
+            }
+        }
+        catch (Exception)
+        {
+            // Composant supprimé : rien à faire.
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            var state = await Runner.GetAudioAsync(Pc, _cts.Token);
+            Apply(state);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception)
+        {
+            // Composant supprimé pendant la requête.
+        }
+    }
+
+    private void Apply(AudioState? state)
+    {
+        if (state is null)
+        {
+            _loaded = false;
+            return;
+        }
+
+        _loaded = true;
+        _muted = state.Muted;
+        _estimated = state.Estimated;
+        _level = state.Level;
+        _shown = state.Level;
+    }
+
+    private void OnInput(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var value)) return;
+
+        _level = Math.Clamp(value, 0, 100);
+        _muted = false;
+
+        // Pendant le glissement : on envoie au plus toutes les 150 ms.
+        if (DateTime.UtcNow - _lastSent >= SendEvery)
+        {
+            _lastSent = DateTime.UtcNow;
+            _ = SendAsync(_level);
+        }
+    }
+
+    private async Task OnCommit(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var value)) return;
+
+        _level = Math.Clamp(value, 0, 100);
+        _shown = _level;
+        await SendAsync(_level);
+    }
+
+    private async Task SendAsync(int level)
+    {
+        var state = await Runner.SetAudioAsync(Pc, level: level, ct: _cts.Token);
+        await Report(state);
+    }
+
+    private async Task ToggleMuteAsync()
+    {
+        var state = await Runner.SetAudioAsync(Pc, mute: "toggle", ct: _cts.Token);
+        Apply(state);
+        await Report(state);
+    }
+
+    private async Task Report(AudioState? state)
+    {
+        if (state is null)
+            await OnResult.InvokeAsync(new RunResult(false, $"Volume : {Runner.LastAudioError ?? "le PC ne répond pas"}"));
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

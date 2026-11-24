@@ -1,0 +1,248 @@
+@inject ScriptRunner Runner
+@inject WakeService Wake
+@implements IDisposable
+
+<section class="settings-card">
+    <div class="settings-card-head">
+        <span class="settings-chip"><i class="fa-solid fa-server"></i></span>
+        <div>
+            <h2>PC pilotés</h2>
+            <p>Chaque PC a son serveur de scripts, son token et son adresse MAC (réveil).</p>
+        </div>
+    </div>
+
+    <div class="settings-tabs" role="tablist" aria-label="PC">
+        @foreach (var pc in State.Cfg.Pcs)
+        {
+            <button type="button" class="@TabClass(pc)" @onclick="() => Select(pc)">
+                <i class="fa-solid fa-desktop"></i>
+                <span>@pc.Name</span>
+                <span class="@StatusDotClass(pc)" title="@StatusTitle(pc)" aria-hidden="true"></span>
+                @if (pc.Id == State.Cfg.DefaultPcId && State.Cfg.Pcs.Count > 1)
+                {
+                    <span class="settings-tab-count">par défaut</span>
+                }
+            </button>
+        }
+        <button type="button" class="settings-tab settings-tab-add" @onclick="Add" aria-label="Ajouter un PC" title="Ajouter un PC">
+            <i class="fa-solid fa-plus"></i>
+        </button>
+    </div>
+
+    <label class="settings-field">
+        <span class="settings-label">Nom</span>
+        <span class="settings-input settings-input-plain">
+            <input @bind="Pc.Name" placeholder="Mon PC" autocomplete="off" />
+        </span>
+    </label>
+
+    <label class="settings-field">
+        <span class="settings-label">Adresse du serveur</span>
+        <span class="settings-input">
+            <i class="fa-solid fa-link"></i>
+            <input @bind="Pc.ServerUrl" placeholder="http://192.168.1.100:8765" inputmode="url" autocomplete="off" spellcheck="false" />
+        </span>
+    </label>
+
+    <label class="settings-field">
+        <span class="settings-label">Token</span>
+        <span class="settings-input">
+            <i class="fa-solid fa-key"></i>
+            <input type="@TokenType" @bind="Pc.Token" autocomplete="off" spellcheck="false" />
+            <button type="button" class="settings-input-action" @onclick="ToggleToken" aria-label="Afficher ou masquer le token" title="Afficher ou masquer">
+                <i class="@TokenIcon"></i>
+            </button>
+        </span>
+    </label>
+
+    <label class="settings-field">
+        <span class="settings-label">Adresse MAC (réveil du PC, facultatif)</span>
+        <span class="@MacClass">
+            <i class="fa-solid fa-network-wired"></i>
+            <input @bind="Pc.Mac" placeholder="6C-02-E0-3E-35-7E" autocomplete="off" spellcheck="false" />
+        </span>
+    </label>
+    <p class="@MacHintClass">@MacHint</p>
+
+    <div class="settings-test">
+        <button type="button" class="settings-btn" @onclick="TestAsync" disabled="@_testing">
+            <i class="@TestIcon"></i><span>Tester la connexion</span>
+        </button>
+        <button type="button" class="settings-btn" @onclick="WakeAsync" disabled="@CannotWake">
+            <i class="fa-solid fa-power-off"></i><span>Envoyer le réveil</span>
+        </button>
+        @if (_result is not null)
+        {
+            <span class="@ResultClass"><i class="@ResultIcon"></i><span>@_result.Message</span></span>
+        }
+    </div>
+
+    @if (State.Cfg.Pcs.Count > 1)
+    {
+        <div class="settings-pc-actions">
+            <ToggleSwitch Label="PC par défaut" Description="Utilisé par les espaces qui n'en désignent pas."
+                          Value="@IsDefault" ValueChanged="SetDefault" Disabled="@IsDefault" />
+            <button type="button" class="settings-btn settings-btn-danger" @onclick="RequestDelete">
+                <i class="fa-solid fa-trash"></i><span>Supprimer ce PC</span>
+            </button>
+        </div>
+    }
+
+    @if (State.ConfirmPc == Pc.Id)
+    {
+        <div class="settings-confirm" role="alert">
+            <span>Supprimer « @Pc.Name » ? Les espaces et boutons qui le visaient utiliseront le PC par défaut.</span>
+            <div class="settings-confirm-actions">
+                <button type="button" class="settings-btn settings-btn-danger" @onclick="Delete"><i class="fa-solid fa-trash"></i><span>Supprimer</span></button>
+                <button type="button" class="settings-btn" @onclick="Cancel"><span>Annuler</span></button>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
+
+    private readonly Dictionary<Guid, bool?> _status = new();
+    private readonly CancellationTokenSource _cts = new();
+
+    protected override void OnInitialized() => _ = MonitorAllAsync(_cts.Token);
+
+    /// <summary>Ping tous les PC configurés en tâche de fond, pour afficher leur état sans avoir à cliquer « Tester ».</summary>
+    private async Task MonitorAllAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                foreach (var pc in State.Cfg.Pcs.ToList())
+                {
+                    if (ct.IsCancellationRequested) return;
+                    if (string.IsNullOrWhiteSpace(pc.ServerUrl)) { _status[pc.Id] = null; continue; }
+
+                    var ping = await Runner.PingAsync(pc.ServerUrl, ct);
+                    _status[pc.Id] = ping.Ok;
+                    await InvokeAsync(StateHasChanged);
+                }
+
+                await Task.Delay(PollInterval, ct);
+            }
+        }
+        catch (Exception)
+        {
+            // Page quittée (annulation) ou composant supprimé : rien à faire.
+        }
+    }
+
+    private string StatusDotClass(PcProfile pc) => _status.TryGetValue(pc.Id, out var ok)
+        ? ok switch { true => "settings-pc-dot is-online", false => "settings-pc-dot is-offline", _ => "settings-pc-dot" }
+        : "settings-pc-dot is-checking";
+
+    private string StatusTitle(PcProfile pc) => _status.TryGetValue(pc.Id, out var ok)
+        ? ok switch { true => "Serveur joignable", false => "Serveur injoignable", _ => "Adresse du serveur manquante" }
+        : "Vérification…";
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    private bool _showToken;
+    private bool _testing;
+    private RunResult? _result;
+
+    private PcProfile Pc => State.Pc;
+    private bool IsDefault => Pc.Id == State.Cfg.DefaultPcId;
+
+    private string TabClass(PcProfile pc) => pc.Id == Pc.Id ? "settings-tab is-active" : "settings-tab";
+
+    private string TokenType => _showToken ? "text" : "password";
+    private string TokenIcon => _showToken ? "fa-solid fa-eye-slash" : "fa-solid fa-eye";
+    private void ToggleToken() => _showToken = !_showToken;
+
+    private bool MacInvalid => !string.IsNullOrWhiteSpace(Pc.Mac) && !WakeService.TryParseMac(Pc.Mac, out _);
+    private string MacClass => MacInvalid ? "settings-input is-invalid" : "settings-input";
+    private string MacHintClass => "settings-hint";
+    private bool CannotWake => !WakeService.TryParseMac(Pc.Mac, out _);
+
+    private string MacHint => MacInvalid
+        ? "Adresse MAC invalide : 12 caractères (0-9, A-F), par exemple 6C-02-E0-3E-35-7E."
+        : "Dans Windows : ipconfig /all, ligne « Adresse physique » de la carte Ethernet du PC. Ce PC doit être branché en Ethernet avec le Wake-on-LAN activé.";
+
+    private string TestIcon => _testing ? "fa-solid fa-spinner fa-spin" : "fa-solid fa-plug";
+    private string ResultClass => _result switch
+    {
+        { Ok: true, Warning: false } => "settings-test-result is-ok",
+        { Ok: true } => "settings-test-result is-warn",
+        _ => "settings-test-result is-err"
+    };
+    private string ResultIcon => _result switch
+    {
+        { Ok: true, Warning: false } => "fa-solid fa-circle-check",
+        { Ok: true } => "fa-solid fa-circle-exclamation",
+        _ => "fa-solid fa-circle-xmark"
+    };
+
+    private void Select(PcProfile pc)
+    {
+        State.PcId = pc.Id;
+        State.CancelConfirm();
+        _result = null;
+        State.Notify();
+    }
+
+    private void Add()
+    {
+        var pc = new PcProfile { Name = $"PC {State.Cfg.Pcs.Count + 1}", ServerUrl = string.Empty };
+        State.Cfg.Pcs.Add(pc);
+        Select(pc);
+    }
+
+    private void SetDefault(bool value)
+    {
+        if (value) State.Cfg.DefaultPcId = Pc.Id;
+        State.Notify();
+    }
+
+    private void RequestDelete()
+    {
+        if (State.Cfg.Pcs.Count <= 1) return;
+        State.ConfirmPc = Pc.Id;
+    }
+
+    private void Cancel() => State.CancelConfirm();
+
+    private void Delete()
+    {
+        if (State.Cfg.Pcs.Count <= 1) return;
+
+        var i = State.Cfg.Pcs.IndexOf(Pc);
+        var wasDefault = IsDefault;
+        State.Cfg.Pcs.RemoveAt(i);
+        State.PcId = State.Cfg.Pcs[Math.Min(i, State.Cfg.Pcs.Count - 1)].Id;
+        if (wasDefault) State.Cfg.DefaultPcId = State.Cfg.Pcs[0].Id;
+
+        State.Cfg.EnsureValid();
+        State.CancelConfirm();
+        _result = null;
+        State.Notify();
+    }
+
+    private async Task TestAsync()
+    {
+        _testing = true;
+        _result = null;
+        StateHasChanged();
+
+        _result = await Runner.TestAsync(Pc);
+        _testing = false;
+    }
+
+    private async Task WakeAsync()
+    {
+        _result = await Wake.WakeAsync(Pc.Mac, Pc.ServerUrl);
+    }
+}

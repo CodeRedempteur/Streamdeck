@@ -1,0 +1,162 @@
+<section class="settings-card">
+    <div class="settings-card-head">
+        <span class="settings-chip"><i class="fa-solid fa-layer-group"></i></span>
+        <div>
+            <h2>Espaces de travail</h2>
+            <p>Regroupe tes boutons par usage : jeux, travail, dev…</p>
+        </div>
+    </div>
+
+    <div class="settings-tabs" role="tablist" aria-label="Espaces de travail">
+        @foreach (var w in State.Cfg.Workspaces)
+        {
+            <button type="button" class="@TabClass(w)" @onclick="() => Select(w)">
+                <KeyIcon Icon="@w.Icon" />
+                <span>@w.Name</span>
+                @if (!w.Enabled)
+                {
+                    <span class="settings-tab-count">désactivé</span>
+                }
+            </button>
+        }
+        <button type="button" class="settings-tab settings-tab-add" @onclick="Add" aria-label="Ajouter un espace" title="Ajouter un espace">
+            <i class="fa-solid fa-plus"></i>
+        </button>
+    </div>
+
+    <div class="settings-ws">
+        <button type="button" class="settings-ws-icon" @onclick="PickIcon" aria-label="Changer l'icône de l'espace" title="Changer l'icône">
+            <KeyIcon Icon="@Ws.Icon" />
+            <span class="settings-tile-edit"><i class="fa-solid fa-pen"></i></span>
+        </button>
+
+        <div class="settings-ws-fields">
+            <label class="settings-field">
+                <span class="settings-label">Nom de l'espace</span>
+                <span class="settings-input settings-input-plain">
+                    <input @bind="Ws.Name" placeholder="Jeux, Travail, Dev" autocomplete="off" />
+                </span>
+            </label>
+
+            @if (State.Cfg.Pcs.Count > 1)
+            {
+                <ChoiceField Label="PC visé par cet espace" PickerIcon="fa-solid fa-desktop"
+                             Items="PcChoices" Value="@PcValue" ValueChanged="SetPc" />
+            }
+
+            <ToggleSwitch Label="Espace activé" Description="Désactivé : masqué de l'écran principal (onglet et boutons), sans rien supprimer."
+                          Value="Ws.Enabled" ValueChanged="SetEnabled" />
+        </div>
+
+        <div class="settings-row-actions">
+            <button type="button" class="settings-btn settings-btn-icon" @onclick="() => Move(-1)" disabled="@IsFirst" aria-label="Déplacer vers la gauche" title="Déplacer vers la gauche">
+                <i class="fa-solid fa-arrow-left"></i>
+            </button>
+            <button type="button" class="settings-btn settings-btn-icon" @onclick="() => Move(1)" disabled="@IsLast" aria-label="Déplacer vers la droite" title="Déplacer vers la droite">
+                <i class="fa-solid fa-arrow-right"></i>
+            </button>
+            <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="RequestDelete" disabled="@OnlyOne" aria-label="Supprimer l'espace" title="Supprimer l'espace">
+                <i class="fa-solid fa-trash"></i>
+            </button>
+        </div>
+    </div>
+
+    @if (State.ConfirmWorkspace == Ws.Id)
+    {
+        <div class="settings-confirm" role="alert">
+            <span>Supprimer « @Ws.Name » et ses @ButtonCount bouton(s) ?</span>
+            <div class="settings-confirm-actions">
+                <button type="button" class="settings-btn settings-btn-danger" @onclick="Delete"><i class="fa-solid fa-trash"></i><span>Supprimer</span></button>
+                <button type="button" class="settings-btn" @onclick="Cancel"><span>Annuler</span></button>
+            </div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    private Workspace Ws => State.Ws;
+    private bool OnlyOne => State.Cfg.Workspaces.Count <= 1;
+    private bool IsFirst => State.Cfg.Workspaces.IndexOf(Ws) <= 0;
+    private bool IsLast => State.Cfg.Workspaces.IndexOf(Ws) >= State.Cfg.Workspaces.Count - 1;
+    private int ButtonCount => Ws.Pages.Sum(p => p.Buttons.Count);
+
+    private string TabClass(Workspace w) => w.Id == Ws.Id ? "settings-tab is-active" : "settings-tab";
+
+    // ----- PC visé -----
+
+    private IReadOnlyList<ChoiceItem> PcChoices =>
+        new[] { new ChoiceItem(string.Empty, $"PC par défaut ({State.Cfg.DefaultPc.Name})", null, "fa-solid fa-star") }
+            .Concat(State.Cfg.Pcs.Select(p => new ChoiceItem(p.Id.ToString(), p.Name, p.ServerUrl, "fa-solid fa-desktop")))
+            .ToList();
+
+    private string PcValue => Ws.PcId?.ToString() ?? string.Empty;
+
+    private void SetPc(string value)
+    {
+        Ws.PcId = Guid.TryParse(value, out var id) ? id : null;
+        State.Notify();
+    }
+
+    private void SetEnabled(bool value)
+    {
+        Ws.Enabled = value;
+        State.Notify();
+    }
+
+    // ----- Espaces -----
+
+    private void Select(Workspace w)
+    {
+        State.WorkspaceId = w.Id;
+        State.PageIndex = 0;
+        State.CancelConfirm();
+        State.Notify();
+    }
+
+    private void Add()
+    {
+        var workspace = new Workspace { Name = $"Espace {State.Cfg.Workspaces.Count + 1}" };
+        State.Cfg.Workspaces.Add(workspace);
+        Select(workspace);
+    }
+
+    private void Move(int delta)
+    {
+        var i = State.Cfg.Workspaces.IndexOf(Ws);
+        var j = i + delta;
+        if (i < 0 || j < 0 || j >= State.Cfg.Workspaces.Count) return;
+
+        (State.Cfg.Workspaces[i], State.Cfg.Workspaces[j]) = (State.Cfg.Workspaces[j], State.Cfg.Workspaces[i]);
+        State.Notify();
+    }
+
+    private void PickIcon()
+    {
+        var workspace = Ws;
+        State.RequestIcon(workspace.Icon, cls => workspace.Icon = cls);
+    }
+
+    private void RequestDelete()
+    {
+        if (OnlyOne) return;
+
+        if (ButtonCount == 0) Delete();
+        else State.ConfirmWorkspace = Ws.Id;
+    }
+
+    private void Cancel() => State.CancelConfirm();
+
+    private void Delete()
+    {
+        if (OnlyOne) return;
+
+        var i = State.Cfg.Workspaces.IndexOf(Ws);
+        State.Cfg.Workspaces.RemoveAt(i);
+        State.WorkspaceId = State.Cfg.Workspaces[Math.Min(i, State.Cfg.Workspaces.Count - 1)].Id;
+        State.PageIndex = 0;
+        State.CancelConfirm();
+        State.Notify();
+    }
+}

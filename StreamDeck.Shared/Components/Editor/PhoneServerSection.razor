@@ -1,0 +1,99 @@
+@inject IAppPlatform Platform
+
+@* v1.34.13, demandé explicitement ("les script pc direction le tel") : active le petit serveur qui reçoit les
+   commandes d'un script PC (nouveau bloc « Téléphone » dans Script Builder) — sonner/alarme ou ouvrir une
+   application. Tout en bas des Réglages avec FindPhoneSection, qui couvre l'autre sens (voix → trouver le tel). *@
+@if (Platform.CanRunPhoneServer)
+{
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-satellite-dish"></i></span>
+            <div>
+                <h2>Commandes depuis le PC</h2>
+                <p>Permet à un script du PC (Script Builder, bloc « Téléphone ») de déclencher la sonnerie ou d'ouvrir une application sur ce téléphone.</p>
+            </div>
+        </div>
+
+        <ToggleSwitch Label="Recevoir des commandes du PC" Description="Ouvre un petit serveur local sur ce téléphone (rien n'est exposé en dehors de ton réseau local)."
+                      Value="State.Cfg.PhoneServer.Enabled" ValueChanged="SetEnabled" />
+
+        @if (_error is not null)
+        {
+            <p class="settings-hint is-error"><i class="fa-solid fa-triangle-exclamation"></i> @_error</p>
+        }
+
+        @if (State.Cfg.PhoneServer.Enabled)
+        {
+            <div class="settings-row-fields">
+                <label class="settings-field">
+                    <span class="settings-label">Adresse IP de ce téléphone</span>
+                    <span class="settings-input settings-input-plain">
+                        <input value="@(Platform.LocalIpAddress ?? "Introuvable — vérifie que le Wi-Fi est activé")" readonly />
+                    </span>
+                </label>
+                <label class="settings-field">
+                    <span class="settings-label">Port</span>
+                    <span class="settings-input settings-input-plain">
+                        <input type="number" min="1024" max="65535" value="@State.Cfg.PhoneServer.Port" @onchange='e => SetPort((string?)e.Value ?? "")' />
+                    </span>
+                </label>
+            </div>
+
+            <label class="settings-field">
+                <span class="settings-label">Jeton (à recopier côté Script Builder)</span>
+                <span class="settings-input">
+                    <i class="fa-solid fa-key"></i>
+                    <input type="@TokenType" value="@State.Cfg.PhoneServer.Token" readonly />
+                    <button type="button" class="settings-input-action" @onclick="ToggleToken" aria-label="Afficher ou masquer le jeton" title="Afficher ou masquer"><i class="@TokenIcon"></i></button>
+                </span>
+            </label>
+            <button type="button" class="settings-btn settings-btn-sm" @onclick="RegenerateToken"><i class="fa-solid fa-rotate"></i><span>Regénérer le jeton</span></button>
+
+            <div class="settings-hint-row"><InfoHint>Renseigne cette adresse IP, ce port et ce jeton dans Script Builder (Réglages → Téléphone) pour qu'un bloc « Téléphone » d'un script puisse atteindre ce téléphone. L'adresse IP change si ce téléphone rejoint un autre réseau Wi-Fi — à revérifier ici si les commandes cessent de fonctionner. Comme pour le reste de cet écran, clique « Enregistrer » en haut pour que le port/jeton affichés ici soient bien ceux utilisés par le serveur.</InfoHint></div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    private bool _showToken;
+    private string? _error;
+
+    private string TokenType => _showToken ? "text" : "password";
+    private string TokenIcon => _showToken ? "fa-solid fa-eye-slash" : "fa-solid fa-eye";
+    private void ToggleToken() => _showToken = !_showToken;
+
+    private async Task SetEnabled(bool value)
+    {
+        var ok = await Platform.SetPhoneServerAsync(value);
+        if (!ok && value)
+        {
+            _error = "Impossible de démarrer le serveur sur cet appareil.";
+            State.Notify();
+            return;
+        }
+
+        _error = null;
+        State.Cfg.PhoneServer.Enabled = value;
+        // Comme le reste de cet écran (copie en cours d'édition — voir Settings.razor.Save) : le serveur lui-même,
+        // lancé/arrêté tout de suite ci-dessus, continue de lire le port/jeton ENREGISTRÉS tant que « Enregistrer »
+        // n'a pas été cliqué ; EnsureValid() générera le jeton au besoin à ce moment-là si la liste est encore vide.
+        State.Notify();
+    }
+
+    private void SetPort(string value)
+    {
+        if (int.TryParse(value, out var port)) State.Cfg.PhoneServer.Port = Math.Clamp(port, 1024, 65535);
+        State.Notify();
+    }
+
+    private void RegenerateToken()
+    {
+        // Comme Enabled/Port ci-dessus : modifie seulement la copie en cours d'édition (State.Cfg) — le serveur,
+        // déjà démarré ou non, continue de lire le jeton enregistré (ConfigService.Current) tant que « Enregistrer »
+        // (en haut de l'écran) n'a pas été cliqué.
+        State.Cfg.PhoneServer.Token = Guid.NewGuid().ToString("N");
+        State.Notify();
+    }
+}

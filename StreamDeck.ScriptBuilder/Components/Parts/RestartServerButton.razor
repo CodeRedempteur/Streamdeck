@@ -1,0 +1,82 @@
+@inject ServerRestarter Restarter
+
+<button type="button" class="@(IconOnly ? "settings-btn settings-btn-icon" : "settings-btn")" @onclick="Ask" aria-label="Redémarrer le serveur" title="Arrête puis relance server.ps1">
+    <i class="fa-solid fa-rotate"></i>@if (!IconOnly) { <span>Redémarrer le serveur</span> }
+</button>
+
+<Modal Open="_open" Title="Redémarrer le serveur" Icon="fa-solid fa-rotate" Size="narrow" OnClose="Close">
+    <ChildContent>
+        @if (_running)
+        {
+            <p class="fb-empty"><i class="fa-solid fa-spinner fa-spin"></i> Redémarrage en cours…</p>
+        }
+        else if (_result is null)
+        {
+            <p>Le serveur NFC (<code>server.ps1</code>) va être arrêté puis relancé. Les scripts en cours d'exécution seront interrompus et le Stream Deck sera injoignable quelques secondes.</p>
+            <p class="settings-hint">Utile après une mise à jour de <code>server.ps1</code> ou <code>NfcNative.ps1</code>. Une nouvelle action ou un nouveau script n'en a pas besoin.</p>
+        }
+        else
+        {
+            <p class="@(_result.Ok ? "test-status is-ok" : "test-status is-err")">
+                <i class="@(_result.Ok ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_result.Message</span>
+            </p>
+            @if (_result.Details.Count > 0)
+            {
+                <ul class="rs-details">
+                    @foreach (var d in _result.Details)
+                    {
+                        <li>@d</li>
+                    }
+                </ul>
+            }
+        }
+    </ChildContent>
+    <Footer>
+        @if (_result is null && !_running)
+        {
+            <button type="button" class="settings-btn" @onclick="Close">Annuler</button>
+            <button type="button" class="settings-btn settings-btn-primary" @onclick="RestartAsync"><i class="fa-solid fa-rotate"></i><span>Redémarrer</span></button>
+        }
+        else if (!_running)
+        {
+            <button type="button" class="settings-btn settings-btn-primary" @onclick="Close">Fermer</button>
+        }
+    </Footer>
+</Modal>
+
+@code {
+    /// <summary>Icône seule, sans le texte "Redémarrer le serveur" (en-tête commun des trois pages, v1.34.3).</summary>
+    [Parameter] public bool IconOnly { get; set; }
+
+    private bool _open;
+    private bool _running;
+    private RestartResult? _result;
+
+    private void Ask()
+    {
+        _result = null;
+        _open = true;
+    }
+
+    private void Close()
+    {
+        if (!_running) _open = false;
+    }
+
+    private async Task RestartAsync()
+    {
+        _running = true;
+        try
+        {
+            _result = await Restarter.RestartAsync();
+        }
+        catch (Exception ex)
+        {
+            _result = new RestartResult(false, ex.Message, Array.Empty<string>());
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+}

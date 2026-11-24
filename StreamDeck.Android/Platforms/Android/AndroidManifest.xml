@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+	<!-- usesCleartextTraffic : indispensable, le serveur de scripts est en http:// (réseau local) -->
+	<application android:allowBackup="false"
+	             android:icon="@mipmap/appicon"
+	             android:roundIcon="@mipmap/appicon_round"
+	             android:supportsRtl="true"
+	             android:usesCleartextTraffic="true">
+		<!-- Commande vocale : service au premier plan, obligatoire pour garder le micro ouvert hors de l'app. -->
+		<service android:name=".VoiceListenerService" android:exported="false" android:foregroundServiceType="microphone" />
+		<!-- v1.34.13 : reçoit des commandes du PC (sonnerie/alarme, ouvrir une app — voir PhoneCommandServerService)
+		     via un petit serveur TCP local, écoute en tâche de fond exigeant elle aussi un service au premier plan. -->
+		<service android:name=".PhoneCommandServerService" android:exported="false" android:foregroundServiceType="dataSync" />
+	</application>
+
+	<uses-permission android:name="android.permission.INTERNET" />
+	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+	<uses-permission android:name="android.permission.WAKE_LOCK" />
+	<!-- Vibration au toucher -->
+	<uses-permission android:name="android.permission.VIBRATE" />
+
+	<!-- Lancement automatique au démarrage de l'appareil -->
+	<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+	<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+	<!-- Commande vocale : micro, service au premier plan de type microphone, notification permanente pendant l'écoute -->
+	<uses-permission android:name="android.permission.RECORD_AUDIO" />
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+	<!-- "Retrouver le téléphone" : régler le volume et jouer l'alarme (MODIFY_AUDIO_SETTINGS), passer en mode
+	     sonnerie (ACCESS_NOTIFICATION_POLICY, depuis Android 7 — accordée à la main dans les réglages système, pas
+	     via une boîte de dialogue ; sans elle, seule l'alarme sonne, voir AndroidPlatform.TriggerFindPhone). -->
+	<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+	<uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+
+	<!-- v1.34.13 : serveur de commandes PC → téléphone (PhoneCommandServerService), service au premier plan de type
+	     "dataSync" (le plus proche de "petit serveur réseau local" parmi les types reconnus par Android 14+ — rien
+	     ne correspond exactement à "serveur TCP", et le service ne synchronise aucune donnée à proprement parler). -->
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+	<!-- v1.34.13 : "Ouvrir une application" (commande du PC) a besoin de lister/lancer une app installée par son
+	     paquet — sans cette déclaration, Android 11+ (visibilité des paquets) masque les autres applications et
+	     PackageManager.GetLaunchIntentForPackage renvoie systématiquement null. -->
+	<queries>
+		<intent>
+			<action android:name="android.intent.action.MAIN" />
+			<category android:name="android.intent.category.LAUNCHER" />
+		</intent>
+	</queries>
+</manifest>

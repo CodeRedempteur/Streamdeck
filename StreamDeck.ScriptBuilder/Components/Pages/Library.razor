@@ -1,0 +1,1164 @@
+@page "/"
+@inject ScriptStore Store
+@inject ScheduleStore Schedules
+@inject BuilderConfigService Config
+@inject EditorSession Session
+@inject ScriptTester Tester
+@inject ShellService Shell
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="lib" @onmouseup="CancelDrag">
+    <MainHeader ActiveTab="@_mainTab" Subtitle="Crée les scripts PowerShell de ton Stream Deck, sans écrire de code." />
+
+    @if (_mainTab == "widget")
+    {
+        <WidgetConfigPanel />
+    }
+    else if (!_ready)
+    {
+        <div class="lib-setup">
+            <p class="lib-setup-intro">Pour commencer, indique où se trouve ton serveur NFC : les scripts créés y seront enregistrés, au bon endroit, prêts à être appelés par le Stream Deck.</p>
+            <ServerFolderCard OnConfigured="OnConfigured" />
+        </div>
+    }
+    else
+    {
+        <div class="lib-toolbar">
+            <span class="settings-input lib-search">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input @bind="_query" @bind:event="oninput" placeholder="Rechercher un script (nom, dossier, description, action…)" autocomplete="off" spellcheck="false" aria-label="Rechercher un script" />
+                @if (Searching)
+                {
+                    <button type="button" class="settings-input-action" @onclick="ClearSearch" aria-label="Effacer la recherche" title="Effacer"><i class="fa-solid fa-xmark"></i></button>
+                }
+            </span>
+
+            <div class="lib-views" role="group" aria-label="Affichage">
+                <button type="button" class="@(_view == "cards" ? "lib-view is-on" : "lib-view")" @onclick='() => SetView("cards")' aria-label="Affichage en cartes" title="Cartes"><i class="fa-solid fa-table-cells-large"></i></button>
+                <button type="button" class="@(_view == "list" ? "lib-view is-on" : "lib-view")" @onclick='() => SetView("list")' aria-label="Affichage en liste" title="Liste"><i class="fa-solid fa-list"></i></button>
+            </div>
+
+            @if (!Searching && VisibleFolders.Count() + VisibleScripts.Count() > 1)
+            {
+                <button type="button" class="settings-btn" @onclick="SortCurrentFolder" title="Range par ordre alphabétique (dossiers d'abord, puis scripts) — dans ce dossier uniquement">
+                    <i class="fa-solid fa-arrow-down-a-z"></i><span>Trier</span>
+                </button>
+            }
+
+            @* Propres à cette page — volontairement PAS dans l'en-tête commun (MainHeader.razor), qui doit rester
+               identique sur les trois pages (v1.34.3, correctif : ces deux boutons y vivaient avant et faisaient
+               justement revenir un en-tête différent sur Scripts par rapport à Widget/Réglages). *@
+            <div class="lib-toolbar-page-actions">
+                <button type="button" class="settings-btn" @onclick="AskNewFolder">
+                    <i class="fa-solid fa-folder-plus"></i><span>Nouveau dossier</span>
+                </button>
+                <button type="button" class="settings-btn settings-btn-primary" @onclick="OpenNew">
+                    <i class="fa-solid fa-plus"></i><span>Nouveau script</span>
+                </button>
+            </div>
+        </div>
+
+        <nav class="lib-crumbs" aria-label="Dossier">
+            @if (Searching)
+            {
+                <span class="lib-crumb-current"><i class="fa-solid fa-magnifying-glass"></i> @VisibleScripts.Count() résultat@(VisibleScripts.Count() > 1 ? "s" : "") dans tous les dossiers</span>
+            }
+            else
+            {
+                <button type="button" class="@CrumbClass("")" @onclick='() => Open("")'
+                        @onmouseenter="() => HoverFolder(string.Empty)" @onmouseleave="UnhoverFolder" @onmouseup='() => DropOn("")'>
+                    <i class="fa-solid fa-house"></i><span>Script</span>
+                </button>
+                @foreach (var crumb in Crumbs)
+                {
+                    <i class="fa-solid fa-chevron-right lib-crumb-sep"></i>
+                    <button type="button" class="@CrumbClass(crumb.Path)" @onclick="() => Open(crumb.Path)"
+                            @onmouseenter="() => HoverFolder(crumb.Path)" @onmouseleave="UnhoverFolder" @onmouseup="() => DropOn(crumb.Path)">
+                        <span>@crumb.Name</span>
+                    </button>
+                }
+            }
+            <span class="lib-crumb-path" title="@Store.ScriptsDir"><i class="fa-solid fa-folder-open"></i> @Store.ScriptsDir</span>
+        </nav>
+
+        <nav class="lib-workspaces" aria-label="Zones de travail">
+            @foreach (var ws in Workspaces)
+            {
+                <button type="button" class="@WorkspaceClass(ws)" style="@AppearanceStyle(ws.Color)" @onclick="() => SwitchWorkspace(ws.Name)"
+                        @onmouseenter="() => HoverWorkspace(ws.Name)" @onmouseleave="UnhoverDrop" @onmouseup="() => DropOnWorkspace(ws.Name)"
+                        title="@(ws.Name.Length == 0 ? "Par défaut" : ws.Name)">
+                    <i class="@(ws.Icon.Length > 0 ? ws.Icon : "fa-solid fa-layer-group")"></i><span>@(ws.Name.Length == 0 ? "Par défaut" : ws.Name)</span>
+                </button>
+            }
+            <button type="button" class="lib-workspace lib-workspace-add" @onclick="() => _creatingWorkspace = true" title="Nouvelle zone de travail">
+                <i class="fa-solid fa-plus"></i>
+            </button>
+            @if (_workspace.Length > 0)
+            {
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => { _renamingWorkspace = _workspace; _newWorkspaceName = _workspace; }" aria-label="Renommer la zone de travail" title="Renommer cette zone de travail"><i class="fa-solid fa-pen"></i></button>
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => _customizingWorkspace = _workspace" aria-label="Personnaliser la zone de travail" title="Icône et couleur"><i class="fa-solid fa-palette"></i></button>
+                <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => _deletingWorkspace = _workspace" aria-label="Supprimer la zone de travail" title="Supprimer (son contenu revient Par défaut)"><i class="fa-solid fa-trash"></i></button>
+            }
+        </nav>
+
+        @if (_notice is not null)
+        {
+            <p class="settings-test-result is-ok"><i class="fa-solid fa-circle-check"></i><span>@_notice</span></p>
+        }
+        @if (_error is not null)
+        {
+            <p class="settings-test-result is-err"><i class="fa-solid fa-circle-xmark"></i><span>@_error</span></p>
+        }
+
+        @if (!VisibleFolders.Any() && !VisibleScripts.Any())
+        {
+            <div class="lib-empty">
+                @if (Searching)
+                {
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <h2>Aucun résultat</h2>
+                    <p>Aucun script ne correspond à « @_query.Trim() ».</p>
+                    <button type="button" class="settings-btn" @onclick="ClearSearch"><i class="fa-solid fa-xmark"></i><span>Effacer la recherche</span></button>
+                }
+                else if (_scripts.Count == 0 && _folders.Count == 0)
+                {
+                    <i class="fa-solid fa-scroll"></i>
+                    <h2>Aucun script pour l'instant</h2>
+                    <p>Crée ton premier script : pars d'un modèle (jeu Steam, soirée cinéma, session de travail…) ou d'une page vide.</p>
+                    <button type="button" class="settings-btn settings-btn-primary" @onclick="OpenNew"><i class="fa-solid fa-plus"></i><span>Nouveau script</span></button>
+                }
+                else
+                {
+                    <i class="fa-solid fa-folder-open"></i>
+                    <h2>Ce dossier est vide</h2>
+                    <p>Crée un script ici, ou déplace-y des scripts existants avec le bouton <i class="fa-solid fa-folder-tree"></i> de leur carte.</p>
+                    <button type="button" class="settings-btn settings-btn-primary" @onclick="OpenNew"><i class="fa-solid fa-plus"></i><span>Nouveau script ici</span></button>
+                }
+            </div>
+        }
+        else
+        {
+            var displayItems = VisibleItems.ToList();
+            <ul class="@(_view == "cards" ? "lib-items is-cards" : "lib-items is-list")">
+                @for (var i = 0; i < displayItems.Count; i++)
+                {
+                    var index = i;
+                    var item = displayItems[i];
+
+                    if (item.Folder is { } folder)
+                    {
+                        <li @key="@("folder:" + folder.Path)" id="@CardElementId(true, folder.Path)" class="@FolderCardClass(folder)">
+                            <div class="lib-card-main"
+                                 @onmouseenter="() => HoverInside(folder.Path)" @onmouseleave="UnhoverDrop" @onmouseup="() => DropInside(folder.Path)">
+                                <span class="lib-grab" title="Glisser pour déplacer ce dossier" aria-label="Glisser pour déplacer"
+                                      @onmousedown="e => OnDragStartFolder(e, folder.Path)" @onmousedown:preventDefault>
+                                    <i class="fa-solid fa-grip-vertical"></i>
+                                </span>
+                                <button type="button" class="lib-card-open" @onclick="() => Open(folder.Path)" title="Ouvrir le dossier">
+                                    <span class="lib-card-icon is-folder" style="@AppearanceStyle(folder.Color)"><i class="@(folder.Icon.Length > 0 ? folder.Icon : "fa-solid fa-folder")"></i></span>
+                                    <span class="lib-card-text">
+                                        <strong>@folder.Name</strong>
+                                        <span class="lib-card-meta">
+                                            <span class="lib-badge is-folder">@folder.TotalCount script@(folder.TotalCount > 1 ? "s" : "")</span>
+                                            @if (folder.SubfolderCount > 0)
+                                            {
+                                                <span>@folder.SubfolderCount sous-dossier@(folder.SubfolderCount > 1 ? "s" : "")</span>
+                                            }
+                                            @if (!folder.Enabled)
+                                            {
+                                                <span class="lib-badge is-off" title="Le serveur refuse tous les scripts de ce dossier">désactivé</span>
+                                            }
+                                            @if (Searching)
+                                            {
+                                                <span>@folder.Path</span>
+                                            }
+                                        </span>
+                                    </span>
+                                </button>
+                                @if (IsDragging)
+                                {
+                                    <span class="lib-card-drop-hint"><i class="fa-solid fa-arrow-turn-down"></i></span>
+                                }
+                            </div>
+                            <div class="lib-card-actions">
+                                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => ToggleFolderEnabled(folder)" aria-label="@(folder.Enabled ? "Désactiver le dossier" : "Activer le dossier")" title="@(folder.Enabled ? "Désactiver (le serveur refusera tous les scripts dedans)" : "Activer")"><i class="@(folder.Enabled ? "fa-solid fa-toggle-on" : "fa-solid fa-toggle-off")"></i></button>
+                                <div class="lib-menu">
+                                    <button type="button" class="settings-btn settings-btn-icon" @onclick='() => ToggleMenu("folder:" + folder.Path)' aria-label="Plus d'actions" title="Plus d'actions"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+                                    @if (_openMenu == "folder:" + folder.Path)
+                                    {
+                                        <div class="lib-menu-backdrop" @onclick="() => _openMenu = null"></div>
+                                        <div class="lib-menu-list">
+                                            <button type="button" @onclick="() => { _customizingFolder = folder; _openMenu = null; }"><i class="fa-solid fa-palette"></i><span>Personnaliser</span></button>
+                                            <button type="button" @onclick="() => { AskRename(folder); _openMenu = null; }"><i class="fa-solid fa-pen"></i><span>Renommer</span></button>
+                                            <button type="button" @onclick="() => { _movingFolder = folder; _openMenu = null; }"><i class="fa-solid fa-folder-tree"></i><span>Déplacer dans un dossier</span></button>
+                                            @if (folder.Depth == 0)
+                                            {
+                                                <button type="button" @onclick="() => { _movingWorkspace = (true, folder.Path, folder.Name); _openMenu = null; }"><i class="fa-solid fa-layer-group"></i><span>Déplacer vers une zone</span></button>
+                                            }
+                                            <button type="button" class="settings-btn-danger" @onclick="() => { _deletingFolder = folder; _openMenu = null; }"><i class="fa-solid fa-trash"></i><span>Supprimer</span></button>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                            @if (IsDragging && !Searching)
+                            {
+                                <span class="lib-drop-edge lib-drop-edge-left @(_dragOverIndex == index ? "is-on" : "")" title="Se positionner avant ce dossier"
+                                      @onmouseenter="() => HoverIndex(index)" @onmouseleave="UnhoverDrop" @onmouseup="() => DropAtIndex(index)"></span>
+                                <span class="lib-drop-edge lib-drop-edge-right @(_dragOverIndex == index + 1 ? "is-on" : "")" title="Se positionner après ce dossier"
+                                      @onmouseenter="() => HoverIndex(index + 1)" @onmouseleave="UnhoverDrop" @onmouseup="() => DropAtIndex(index + 1)"></span>
+                            }
+                        </li>
+                    }
+                    else if (item.Script is { } script)
+                    {
+                        <li @key="@("script:" + script.Id)" id="@CardElementId(false, script.Id)" class="@ScriptCardClass(script)">
+                            <div class="lib-card-main">
+                                <span class="lib-grab" title="Glisser pour ranger ou repositionner" aria-label="Glisser pour déplacer"
+                                      @onmousedown="e => OnDragStartScript(e, script.Id)" @onmousedown:preventDefault>
+                                    <i class="fa-solid fa-grip-vertical"></i>
+                                </span>
+                                <span class="lib-card-icon" style="@AppearanceStyle(script.Color)"><i class="@(script.Icon.Length > 0 ? script.Icon : script.IsBuilderScript ? "fa-solid fa-wand-magic-sparkles" : "fa-solid fa-file-code")"></i></span>
+                                <span class="lib-card-text">
+                                    <strong>@script.Id</strong>
+                                    <span class="lib-card-meta">
+                                        @if (script.IsBuilderScript)
+                                        {
+                                            <span class="lib-badge">@script.StepCount action@(script.StepCount > 1 ? "s" : "")</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="lib-badge is-manual" title="Ce script n'a pas été créé avec le constructeur : il ne peut pas être modifié ici.">écrit à la main</span>
+                                        }
+                                        @if (!script.Enabled)
+                                        {
+                                            <span class="lib-badge is-off" title="Le serveur refuse de le lancer">désactivé</span>
+                                        }
+                                        @if (script.Folder.Length > 0)
+                                        {
+                                            <span class="lib-badge is-folder" title="Dossier"><i class="fa-solid fa-folder"></i> @script.Folder</span>
+                                        }
+                                        <span>modifié @script.Modified.ToString("dd/MM/yyyy HH:mm")</span>
+                                    </span>
+                                    @if (!string.IsNullOrWhiteSpace(script.Description))
+                                    {
+                                        <span class="lib-card-desc">@script.Description</span>
+                                    }
+                                    @if (script.Kinds.Count > 0)
+                                    {
+                                        <span class="lib-chain" aria-label="Actions du script">
+                                            @foreach (var kind in script.Kinds.Take(8))
+                                            {
+                                                <i class="@StepCatalog.Of(kind).Icon" title="@StepCatalog.Of(kind).Title"></i>
+                                            }
+                                            @if (script.Kinds.Count > 8)
+                                            {
+                                                <span>+@(script.Kinds.Count - 8)</span>
+                                            }
+                                        </span>
+                                    }
+                                </span>
+                            </div>
+
+                            <div class="lib-card-actions">
+                                @if (script.IsBuilderScript)
+                                {
+                                    <button type="button" class="settings-btn" @onclick="() => Edit(script)"><i class="fa-solid fa-pen"></i><span>Modifier</span></button>
+                                }
+                                else
+                                {
+                                    <button type="button" class="settings-btn" @onclick="() => Shell.OpenFile(script.Path)"><i class="fa-solid fa-file-code"></i><span>Ouvrir</span></button>
+                                }
+                                <button type="button" class="settings-btn" @onclick="() => RunTest(script)"><i class="fa-solid fa-play"></i><span>Tester</span></button>
+                                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => ToggleScriptEnabled(script)" aria-label="@(script.Enabled ? "Désactiver" : "Activer")" title="@(script.Enabled ? "Désactiver (le serveur refusera de le lancer)" : "Activer")"><i class="@(script.Enabled ? "fa-solid fa-toggle-on" : "fa-solid fa-toggle-off")"></i></button>
+                                <div class="lib-menu">
+                                    <button type="button" class="settings-btn settings-btn-icon" @onclick='() => ToggleMenu("script:" + script.Id)' aria-label="Plus d'actions" title="Plus d'actions"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+                                    @if (_openMenu == "script:" + script.Id)
+                                    {
+                                        <div class="lib-menu-backdrop" @onclick="() => _openMenu = null"></div>
+                                        <div class="lib-menu-list">
+                                            <button type="button" @onclick="() => { _customizing = script; _openMenu = null; }"><i class="fa-solid fa-palette"></i><span>Personnaliser</span></button>
+                                            <button type="button" @onclick="async () => { await CopyName(script); _openMenu = null; }"><i class="fa-solid fa-copy"></i><span>Copier le nom</span></button>
+                                            @if (script.IsBuilderScript)
+                                            {
+                                                <button type="button" @onclick="() => { _moving = script; _openMenu = null; }"><i class="fa-solid fa-folder-tree"></i><span>Déplacer vers un dossier</span></button>
+                                            }
+                                            @if (script.Folder.Length == 0)
+                                            {
+                                                <button type="button" @onclick="() => { _movingWorkspace = (false, script.Id, script.Id); _openMenu = null; }"><i class="fa-solid fa-layer-group"></i><span>Déplacer vers une zone</span></button>
+                                            }
+                                            <button type="button" @onclick="() => { Duplicate(script); _openMenu = null; }"><i class="fa-solid fa-clone"></i><span>Dupliquer</span></button>
+                                            <button type="button" @onclick="() => { Shell.RevealInExplorer(script.Path); _openMenu = null; }"><i class="fa-solid fa-arrow-up-right-from-square"></i><span>Afficher dans l'Explorateur</span></button>
+                                            <button type="button" class="settings-btn-danger" @onclick="() => { _deleting = script; _openMenu = null; }"><i class="fa-solid fa-trash"></i><span>Supprimer</span></button>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                            @if (IsDragging && !Searching)
+                            {
+                                <span class="lib-drop-edge lib-drop-edge-half lib-drop-edge-left @(_dragOverIndex == index ? "is-on" : "")" title="Se positionner avant"
+                                      @onmouseenter="() => HoverIndex(index)" @onmouseleave="UnhoverDrop" @onmouseup="() => DropAtIndex(index)"></span>
+                                <span class="lib-drop-edge lib-drop-edge-half lib-drop-edge-right @(_dragOverIndex == index + 1 ? "is-on" : "")" title="Se positionner après"
+                                      @onmouseenter="() => HoverIndex(index + 1)" @onmouseleave="UnhoverDrop" @onmouseup="() => DropAtIndex(index + 1)"></span>
+                            }
+                        </li>
+                    }
+                }
+            </ul>
+
+            <div class="settings-hint-row lib-tip"><InfoHint>Dans Stream Deck, ajoute un bouton de type <strong>Script</strong> et saisis le <strong>nom du script seul</strong> (jamais le dossier, même si tu l'as rangé dans un dossier ici) : le bouton <i class="fa-solid fa-copy"></i> le copie.</InfoHint></div>
+        }
+    }
+</div>
+
+<TemplateGallery Open="_galleryOpen" OnPick="StartNew" OnClose="() => _galleryOpen = false" />
+
+<TestResultPanel Open="_testOpen" Name="@_testName" Result="_testResult" OnClose="() => _testOpen = false" />
+
+<ChoicePicker Open="_moving is not null" Title="@($"Déplacer « {_moving?.Id} » vers…")" Icon="fa-solid fa-folder-tree"
+              Items="MoveChoices" Current="@(_moving is null ? null : (_moving.Folder.Length == 0 ? "/" : _moving.Folder))" OnPick="MoveScript" OnClose="() => _moving = null" />
+
+<ChoicePicker Open="_movingFolder is not null" Title="@($"Déplacer le dossier « {_movingFolder?.Name} » vers…")" Icon="fa-solid fa-folder-tree"
+              Items="@(_movingFolder is null ? Array.Empty<ChoiceItem>() : FolderMoveChoices(_movingFolder))" Current="@(_movingFolder is null ? null : (_movingFolder.Parent.Length == 0 ? "/" : _movingFolder.Parent))" OnPick="MoveFolderTo" OnClose="() => _movingFolder = null" />
+
+<ChoicePicker Open="_movingWorkspace is not null" Title="@($"Déplacer « {_movingWorkspace?.Label} » vers…")" Icon="fa-solid fa-layer-group"
+              Items="WorkspaceChoices" Current="@CurrentItemWorkspace()" OnPick="MoveToWorkspace" OnClose="() => _movingWorkspace = null" />
+
+<AppearancePopup Open="_customizing is not null" Title="@(_customizing?.Id ?? "")" Icon="@(_customizing?.Icon ?? "")" Color="@(_customizing?.Color ?? "")"
+                 OnApply="ApplyScriptAppearance" OnClose="() => _customizing = null" />
+
+<AppearancePopup Open="_customizingFolder is not null" Title="@(_customizingFolder?.Name ?? "")" Icon="@(_customizingFolder?.Icon ?? "")" Color="@(_customizingFolder?.Color ?? "")"
+                 OnApply="ApplyFolderAppearance" OnClose="() => _customizingFolder = null" />
+
+<AppearancePopup Open="_customizingWorkspace is not null" Title="@(_customizingWorkspace ?? "")"
+                 Icon="@(Workspaces.FirstOrDefault(w => w.Name == _customizingWorkspace)?.Icon ?? "")"
+                 Color="@(Workspaces.FirstOrDefault(w => w.Name == _customizingWorkspace)?.Color ?? "")"
+                 OnApply="ApplyWorkspaceAppearance" OnClose="() => _customizingWorkspace = null" />
+
+<Modal Open="_creatingWorkspace" Title="Nouvelle zone de travail" Icon="fa-solid fa-layer-group" Size="narrow" OnClose="CloseWorkspaceDialogs">
+    <ChildContent>
+        <label class="settings-field">
+            <span class="settings-label">Nom</span>
+            <span class="settings-input">
+                <i class="fa-solid fa-layer-group"></i>
+                <input @bind="_newWorkspaceName" @bind:event="oninput" placeholder="ex : Perso, Travail, Stream" autocomplete="off" @onkeydown="@(e => { if (e.Key == "Enter") CreateWorkspace(); })" />
+            </span>
+        </label>
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="CloseWorkspaceDialogs">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="CreateWorkspace" disabled="@(_newWorkspaceName.Trim().Length == 0)">Créer</button>
+    </Footer>
+</Modal>
+
+<Modal Open="_renamingWorkspace is not null" Title="Renommer la zone de travail" Icon="fa-solid fa-pen" Size="narrow" OnClose="CloseWorkspaceDialogs">
+    <ChildContent>
+        <label class="settings-field">
+            <span class="settings-label">Nouveau nom</span>
+            <span class="settings-input">
+                <i class="fa-solid fa-layer-group"></i>
+                <input @bind="_newWorkspaceName" @bind:event="oninput" autocomplete="off" @onkeydown="@(e => { if (e.Key == "Enter") RenameWorkspaceConfirm(); })" />
+            </span>
+        </label>
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="CloseWorkspaceDialogs">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="RenameWorkspaceConfirm" disabled="@(_newWorkspaceName.Trim().Length == 0)">Renommer</button>
+    </Footer>
+</Modal>
+
+<Modal Open="_deletingWorkspace is not null" Title="Supprimer cette zone de travail ?" Icon="fa-solid fa-trash" Size="narrow" OnClose="() => _deletingWorkspace = null">
+    <ChildContent>
+        <p>Son contenu (dossiers et scripts) revient dans « Par défaut » — rien n'est supprimé.</p>
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="() => _deletingWorkspace = null">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-danger" @onclick="ConfirmDeleteWorkspace">Supprimer la zone</button>
+    </Footer>
+</Modal>
+
+<Modal Open="_deleting is not null" Title="Supprimer le script ?" Icon="fa-solid fa-trash" Size="narrow" OnClose="() => _deleting = null">
+    <ChildContent>
+        <p>« <strong>@_deleting?.Id</strong> » sera supprimé du dossier du serveur. Le Stream Deck ne pourra plus l'appeler.</p>
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="() => _deleting = null">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-danger" @onclick="ConfirmDelete"><i class="fa-solid fa-trash"></i><span>Supprimer</span></button>
+    </Footer>
+</Modal>
+
+<Modal Open="_deletingFolder is not null" Title="Supprimer le dossier ?" Icon="fa-solid fa-trash" Size="narrow" OnClose="() => _deletingFolder = null">
+    <ChildContent>
+        @if (_deletingFolder is { TotalCount: > 0 })
+        {
+            <p>Le dossier « <strong>@_deletingFolder.Path</strong> » contient <strong>@_deletingFolder.TotalCount script@(_deletingFolder.TotalCount > 1 ? "s" : "")</strong> : ils seront supprimés avec lui.</p>
+        }
+        else
+        {
+            <p>Le dossier vide « <strong>@_deletingFolder?.Path</strong> » sera supprimé.</p>
+        }
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="() => _deletingFolder = null">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-danger" @onclick="ConfirmDeleteFolder"><i class="fa-solid fa-trash"></i><span>Supprimer</span></button>
+    </Footer>
+</Modal>
+
+<Modal Open="_nameDialog != NameDialog.None" Title="@(_nameDialog == NameDialog.Rename ? "Renommer le dossier" : "Nouveau dossier")" Icon="fa-solid fa-folder-plus" Size="narrow" OnClose="CloseNameDialog">
+    <ChildContent>
+        <label class="settings-field">
+            <span class="settings-label">@(_nameDialog == NameDialog.Rename ? "Nouveau nom" : _folder.Length == 0 ? "Nom du dossier" : $"Nom du dossier (dans « {_folder} »)")</span>
+            <span class="settings-input">
+                <i class="fa-solid fa-folder"></i>
+                <input @bind="_folderName" @bind:event="oninput" @onkeydown="OnNameKey" placeholder="ex : Jeux" autocomplete="off" spellcheck="false" aria-label="Nom du dossier" />
+            </span>
+        </label>
+        @if (_nameError is not null)
+        {
+            <p class="settings-hint pathfield-error"><i class="fa-solid fa-triangle-exclamation"></i> @_nameError</p>
+        }
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="CloseNameDialog">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="SubmitName"><i class="fa-solid fa-check"></i><span>@(_nameDialog == NameDialog.Rename ? "Renommer" : "Créer")</span></button>
+    </Footer>
+</Modal>
+
+@code {
+    private enum NameDialog { None, New, Rename }
+
+    /// <summary>Onglet principal affiché : "scripts" (bibliothèque, page par défaut) ou "widget" (configuration du
+    /// widget de bureau) — dérivé directement de l'adresse (v1.34.3) plutôt que d'un champ local : l'en-tête commun
+    /// (MainHeader.razor) navigue toujours via l'URL pour changer d'onglet, y compris entre Scripts et Widget, pour
+    /// un comportement identique à celui du bouton "Réglages" (qui navigue forcément, lui, vers une autre page).</summary>
+    private string _mainTab => TabQuery == "widget" ? "widget" : "scripts";
+
+    [SupplyParameterFromQuery(Name = "tab")]
+    public string? TabQuery { get; set; }
+
+    private IReadOnlyList<ScriptInfo> _scripts = Array.Empty<ScriptInfo>();
+    private IReadOnlyList<FolderInfo> _folders = Array.Empty<FolderInfo>();
+    private string _folder = string.Empty;
+    private string _workspace = string.Empty;
+    private string _query = string.Empty;
+    private string _view = "cards";
+    private bool _ready;
+    private bool _galleryOpen;
+    private bool _testOpen;
+    private string _testName = string.Empty;
+    private TestResult? _testResult;
+    private ScriptInfo? _deleting;
+    private ScriptInfo? _moving;
+    private FolderInfo? _deletingFolder;
+    private FolderInfo? _renaming;
+    private FolderInfo? _movingFolder;
+    private (bool IsFolder, string Id, string Label)? _movingWorkspace;
+
+    private IReadOnlyList<ChoiceItem> WorkspaceChoices =>
+        Workspaces.Select(w => new ChoiceItem(w.Name.Length == 0 ? "/" : w.Name, w.Name.Length == 0 ? "Par défaut" : w.Name, $"{w.ItemCount} élément{(w.ItemCount > 1 ? "s" : "")}", w.Icon.Length > 0 ? w.Icon : "fa-solid fa-layer-group")).ToList();
+
+    private string? CurrentItemWorkspace()
+    {
+        if (_movingWorkspace is not { } m) return null;
+        var ws = m.IsFolder
+            ? _folders.FirstOrDefault(f => f.Path.Equals(m.Id, StringComparison.OrdinalIgnoreCase))?.Workspace
+            : _scripts.FirstOrDefault(s => s.Id.Equals(m.Id, StringComparison.OrdinalIgnoreCase))?.Workspace;
+        return ws is null ? null : (ws.Length == 0 ? "/" : ws);
+    }
+
+    private void MoveToWorkspace(string target)
+    {
+        var m = _movingWorkspace;
+        _movingWorkspace = null;
+        if (m is null) return;
+
+        var workspace = target == "/" ? "" : target;
+        try
+        {
+            Store.SetItemWorkspace(m.Value.IsFolder, m.Value.Id, workspace);
+            Ok($"« {m.Value.Label} » déplacé vers « {(workspace.Length == 0 ? "Par défaut" : workspace)} ».");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+
+    // ----- Glisser-déposer (souris, sans l'API HTML5 native) -----
+    private string? _draggingScript;
+    private string? _draggingFolder;
+    private string? _dragOverFolder;   // survol du fil d'Ariane (« ranger dedans »)
+    private string? _dragOverInside;   // survol d'une carte de dossier entière (« ranger dedans »)
+    private int? _dragOverIndex;       // survol d'une zone de bord de carte (« se positionner ici »)
+    private string? _dragOverWorkspace; // survol d'un onglet de zone de travail pendant un glissement
+
+    // ----- Menu "plus d'actions" (un seul ouvert à la fois) -----
+    private string? _openMenu;
+
+    private void ToggleMenu(string id) => _openMenu = _openMenu == id ? null : id;
+
+    private bool IsDragging => _draggingScript is not null || _draggingFolder is not null;
+
+    private NameDialog _nameDialog;
+    private string _folderName = string.Empty;
+    private string? _nameError;
+    private string? _notice;
+    private string? _error;
+
+    private bool Searching => _query.Trim().Length > 0;
+
+    /// <summary>Un élément de la bibliothèque : soit un dossier, soit un script (jamais les deux).</summary>
+    private record LibItem(FolderInfo? Folder, ScriptInfo? Script);
+
+    /// <summary>Dossiers et scripts mélangés dans un ordre commun (glisser-déposer) : plus de bloc dossiers puis bloc scripts.</summary>
+    private IEnumerable<LibItem> VisibleItems
+    {
+        get
+        {
+            var items = VisibleFolders.Select(f => new LibItem(f, null)).Concat(VisibleScripts.Select(s => new LibItem(null, s)));
+            if (Searching) return items;
+
+            return items
+                .OrderBy(i => i.Folder?.Order ?? i.Script!.Order)
+                .ThenBy(i => i.Folder?.Name ?? i.Script!.Id, StringComparer.CurrentCultureIgnoreCase);
+        }
+    }
+
+    private IReadOnlyList<WorkspaceInfo> Workspaces => Store.ListWorkspaces();
+
+    private string WorkspaceClass(WorkspaceInfo ws)
+    {
+        var css = "lib-workspace";
+        if (ws.Name.Equals(_workspace, StringComparison.OrdinalIgnoreCase)) css += " is-on";
+        if (_dragOverWorkspace is not null && ws.Name.Equals(_dragOverWorkspace, StringComparison.OrdinalIgnoreCase)) css += " is-dragover";
+        return css;
+    }
+
+    /// <summary>Un dossier ou script NICHÉ n'a pas de zone qui lui soit propre : seul un élément de premier niveau peut être déposé sur un onglet.</summary>
+    private bool CanDropOnWorkspace =>
+        (_draggingFolder is not null && _folders.FirstOrDefault(f => f.Path.Equals(_draggingFolder, StringComparison.OrdinalIgnoreCase))?.Depth == 0) ||
+        (_draggingScript is not null && _scripts.FirstOrDefault(s => s.Id.Equals(_draggingScript, StringComparison.OrdinalIgnoreCase))?.Folder.Length == 0);
+
+    private void HoverWorkspace(string name)
+    {
+        if (CanDropOnWorkspace) _dragOverWorkspace = name;
+    }
+
+    private async Task DropOnWorkspace(string name)
+    {
+        var draggedIsFolder = _draggingFolder is not null;
+        var draggedId = _draggingFolder ?? _draggingScript;
+        var canDrop = CanDropOnWorkspace;
+        var elId = draggedId is null ? null : CardElementId(draggedIsFolder, draggedId);
+        _draggingScript = null;
+        _draggingFolder = null;
+        _dragOverWorkspace = null;
+        _dragOverInside = null;
+        _dragOverIndex = null;
+        await JS.InvokeVoidAsync("sdbDragCard.stop", elId);
+        if (draggedId is null || !canDrop) return;
+
+        try
+        {
+            Store.SetItemWorkspace(draggedIsFolder, draggedId, name);
+            Ok($"« {draggedId} » déplacé vers « {(name.Length == 0 ? "Par défaut" : name)} ».");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    private void SwitchWorkspace(string name)
+    {
+        _workspace = name;
+        _folder = string.Empty;
+        Session.CurrentFolder = _folder;
+    }
+
+    private IEnumerable<ScriptInfo> VisibleScripts
+    {
+        get
+        {
+            if (!Searching) return _scripts.Where(s => s.Folder.Equals(_folder, StringComparison.OrdinalIgnoreCase) && (_folder.Length > 0 || s.Workspace.Equals(_workspace, StringComparison.OrdinalIgnoreCase)));
+
+            var words = _query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return _scripts.Where(s =>
+            {
+                var haystack = $"{s.Id} {s.Description} {s.Keywords}";
+                return words.All(w => haystack.Contains(w, StringComparison.CurrentCultureIgnoreCase));
+            });
+        }
+    }
+
+    private IEnumerable<FolderInfo> VisibleFolders
+    {
+        get
+        {
+            if (!Searching) return _folders.Where(f => f.Parent.Equals(_folder, StringComparison.OrdinalIgnoreCase) && (_folder.Length > 0 || f.Workspace.Equals(_workspace, StringComparison.OrdinalIgnoreCase)));
+
+            var words = _query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return _folders.Where(f => words.All(w => f.Path.Contains(w, StringComparison.CurrentCultureIgnoreCase)));
+        }
+    }
+
+    private IEnumerable<(string Name, string Path)> Crumbs
+    {
+        get
+        {
+            var path = string.Empty;
+            foreach (var part in _folder.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                path = path.Length == 0 ? part : path + "/" + part;
+                yield return (part, path);
+            }
+        }
+    }
+
+    private IReadOnlyList<ChoiceItem> MoveChoices
+    {
+        get
+        {
+            var items = new List<ChoiceItem> { new("/", "Script (racine)", "Pas de dossier", "fa-solid fa-house") };
+            items.AddRange(_folders.Select(f => new ChoiceItem(f.Path, (f.Depth > 0 ? "↳ " : "") + f.Name, f.Path, "fa-solid fa-folder")));
+            return items;
+        }
+    }
+
+    /// <summary>Destinations possibles pour un dossier : la racine et les dossiers qui ne sont ni lui-même ni l'un de ses descendants.</summary>
+    private IReadOnlyList<ChoiceItem> FolderMoveChoices(FolderInfo folder)
+    {
+        var items = new List<ChoiceItem> { new("/", "Script (racine)", "Pas de dossier", "fa-solid fa-house") };
+        items.AddRange(_folders
+            .Where(f => !f.Path.Equals(folder.Path, StringComparison.OrdinalIgnoreCase) && !f.Path.StartsWith(folder.Path + "/", StringComparison.OrdinalIgnoreCase))
+            .Select(f => new ChoiceItem(f.Path, (f.Depth > 0 ? "↳ " : "") + f.Name, f.Path, "fa-solid fa-folder")));
+        return items;
+    }
+
+    private string FolderCardClass(FolderInfo folder)
+    {
+        var css = "lib-card lib-folder-card";
+        if (!folder.Enabled) css += " is-off";
+        if (_dragOverInside == folder.Path) css += " is-dragover-inside";
+        if (_draggingFolder == folder.Path) css += " is-dragging";
+        return css;
+    }
+
+    private string ScriptCardClass(ScriptInfo script)
+    {
+        var css = "lib-card";
+        if (!script.Enabled) css += " is-off";
+        if (_draggingScript == script.Id) css += " is-dragging";
+        return css;
+    }
+
+    private string CrumbClass(string path)
+    {
+        var css = path == _folder ? "lib-crumb is-current" : "lib-crumb";
+        if (_dragOverFolder == path) css += " is-dragover";
+        return css;
+    }
+
+    /// <summary>Identifiant DOM stable d'une carte (pour que le JS de glisser-déposer la retrouve précisément).</summary>
+    private static string CardElementId(bool isFolder, string id) =>
+        (isFolder ? "card-folder-" : "card-script-") + id.Replace(" ", "_").Replace("/", "-");
+
+    private async Task OnDragStartScript(MouseEventArgs e, string id)
+    {
+        _draggingScript = id;
+        _draggingFolder = null;
+        _dragOverFolder = null;
+        await JS.InvokeVoidAsync("sdbDragCard.start", CardElementId(false, id), e.ClientX, e.ClientY);
+    }
+
+    private async Task OnDragStartFolder(MouseEventArgs e, string path)
+    {
+        _draggingFolder = path;
+        _draggingScript = null;
+        _dragOverFolder = null;
+        await JS.InvokeVoidAsync("sdbDragCard.start", CardElementId(true, path), e.ClientX, e.ClientY);
+    }
+
+    /// <summary>Survol du fil d'Ariane pendant un glissement : met en évidence la cible (« ranger dedans »).</summary>
+    private void HoverFolder(string path)
+    {
+        if (IsDragging) _dragOverFolder = path;
+    }
+
+    private void UnhoverFolder()
+    {
+        if (IsDragging) _dragOverFolder = null;
+    }
+
+    /// <summary>Survol d'une carte de dossier entière : « ranger dedans » (uniforme, qu'on tienne un script ou un dossier).</summary>
+    private void HoverInside(string path)
+    {
+        if (IsDragging) _dragOverInside = path;
+    }
+
+    /// <summary>Survol d'une zone de bord de carte (gauche = avant, droite = après) : « se positionner ici ».</summary>
+    private void HoverIndex(int index)
+    {
+        if (IsDragging) _dragOverIndex = index;
+    }
+
+    private void UnhoverDrop()
+    {
+        _dragOverInside = null;
+        _dragOverIndex = null;
+        _dragOverWorkspace = null;
+    }
+
+    /// <summary>Relâché n'importe où (bouton de la souris relâché sans passer par une zone de dépose) : annule proprement.</summary>
+    private async Task CancelDrag()
+    {
+        var elId = _draggingScript is not null ? CardElementId(false, _draggingScript)
+            : _draggingFolder is not null ? CardElementId(true, _draggingFolder) : null;
+        _draggingScript = null;
+        _draggingFolder = null;
+        _dragOverFolder = null;
+        _dragOverInside = null;
+        _dragOverIndex = null;
+        _dragOverWorkspace = null;
+        await JS.InvokeVoidAsync("sdbDragCard.stop", elId);
+    }
+
+    /// <summary>Déposé sur une carte de dossier (ou sur le fil d'Ariane) : l'élément tenu va DANS ce dossier.</summary>
+    private Task DropInside(string targetFolder) => DropOn(targetFolder);
+
+    /// <summary>
+    /// Déposé sur le bord gauche/droit d'une carte : l'élément tenu se positionne exactement là (avant ou après elle).
+    /// <paramref name="visualIndex"/> vient de la liste AFFICHÉE, qui contient encore l'élément tenu : si sa position
+    /// d'origine est avant cet index, on décale d'un cran (le service retire l'élément avant d'insérer, ce qui décale
+    /// tout ce qui suit) pour que l'élément atterrisse exactement là où le bord visé pointait.
+    /// </summary>
+    private async Task DropAtIndex(int visualIndex)
+    {
+        var draggedIsFolder = _draggingFolder is not null;
+        var draggedId = _draggingFolder ?? _draggingScript;
+        var elId = draggedId is null ? null : CardElementId(draggedIsFolder, draggedId);
+        _draggingScript = null;
+        _draggingFolder = null;
+        _dragOverIndex = null;
+        _dragOverInside = null;
+        await JS.InvokeVoidAsync("sdbDragCard.stop", elId);
+        if (draggedId is null) return;
+
+        try
+        {
+            // Rafraîchit d'abord : la position d'origine de l'élément tenu doit venir de l'état ACTUEL du service,
+            // jamais d'un cache qui pourrait être périmé (sans quoi l'ajustement d'index ci-dessous serait faux).
+            Refresh();
+            var current = VisibleItems.ToList();
+            var ownIndex = current.FindIndex(x => draggedIsFolder
+                ? x.Folder?.Path.Equals(draggedId, StringComparison.OrdinalIgnoreCase) == true
+                : x.Script?.Id.Equals(draggedId, StringComparison.OrdinalIgnoreCase) == true);
+            var target = ownIndex >= 0 && visualIndex > ownIndex ? visualIndex - 1 : visualIndex;
+
+            Store.ReorderItemToIndex(draggedIsFolder, draggedId, _folder, target);
+            Ok(draggedIsFolder ? $"Dossier « {draggedId} » repositionné." : $"« {draggedId} » repositionné.");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    private async Task DropOn(string targetFolder)
+    {
+        if (!IsDragging) return;
+
+        var script = _draggingScript;
+        var folder = _draggingFolder;
+        var elId = script is not null ? CardElementId(false, script) : folder is not null ? CardElementId(true, folder) : null;
+        _draggingScript = null;
+        _draggingFolder = null;
+        _dragOverFolder = null;
+        _dragOverInside = null;
+        _dragOverIndex = null;
+        await JS.InvokeVoidAsync("sdbDragCard.stop", elId);
+
+        try
+        {
+            if (script is not null)
+            {
+                Store.SetFolder(script, targetFolder);
+                Ok(targetFolder.Length == 0 ? $"« {script} » déplacé vers la racine." : $"« {script} » déplacé vers « {targetFolder} ».");
+            }
+            else if (folder is not null && !folder.Equals(targetFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                var moved = Store.MoveFolder(folder, targetFolder);
+                if (_folder.Equals(folder, StringComparison.OrdinalIgnoreCase)) _folder = moved;
+                Ok($"Dossier déplacé : {moved}");
+            }
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    /// <summary>Valeurs de départ (utiles aux tests et aux liens) : sinon dernier dossier ouvert et affichage mémorisé.</summary>
+    [Parameter] public string? InitialQuery { get; set; }
+    [Parameter] public string? InitialFolder { get; set; }
+    [Parameter] public string? InitialView { get; set; }
+
+    protected override void OnInitialized()
+    {
+        _view = (InitialView ?? Config.Current.LibraryView) == "list" ? "list" : "cards";
+        _folder = ScriptStore.NormalizeFolder(InitialFolder ?? Session.CurrentFolder);
+        _query = InitialQuery ?? string.Empty;
+        Refresh();
+    }
+
+    private void Refresh()
+    {
+        _ready = Store.HasServerFolder;
+        _scripts = _ready ? Store.List() : Array.Empty<ScriptInfo>();
+        _folders = _ready ? Store.ListFolders(_scripts) : Array.Empty<FolderInfo>();
+
+        // Le dossier affiché a disparu (supprimé, renommé ailleurs) : retour à la racine.
+        if (_folder.Length > 0 && !_folders.Any(f => f.Path.Equals(_folder, StringComparison.OrdinalIgnoreCase))) _folder = string.Empty;
+        Session.CurrentFolder = _folder;
+    }
+
+    private void OnConfigured() => Refresh();
+
+    private void SetView(string view)
+    {
+        _view = view;
+        Config.Update(c => c.LibraryView = view);
+    }
+
+    private void ClearSearch() => _query = string.Empty;
+
+    private void Open(string folder)
+    {
+        _folder = folder;
+        _query = string.Empty;
+        _notice = null;
+        _error = null;
+        Session.CurrentFolder = folder;
+    }
+
+    private void Fail(Exception ex)
+    {
+        _notice = null;
+        _error = ex.Message;
+    }
+
+    private void Ok(string message)
+    {
+        _error = null;
+        _notice = message;
+    }
+
+    // ----- Scripts -----
+
+    private void OpenNew() => _galleryOpen = true;
+
+    private void StartNew(string templateId)
+    {
+        _galleryOpen = false;
+        Session.StartNew(ScriptTemplates.Find(templateId)?.Build(), _folder);
+        Nav.NavigateTo("editor");
+    }
+
+    private void Edit(ScriptInfo script)
+    {
+        try
+        {
+            var project = Store.Load(script.Id);
+            if (project is null) { Refresh(); return; }
+
+            Session.Open(project);
+            Nav.NavigateTo("editor");
+        }
+        catch (Exception ex) { Fail(ex); }
+    }
+
+    private async Task RunTest(ScriptInfo script)
+    {
+        _testName = script.Id;
+        _testResult = null;
+        _testOpen = true;
+        StateHasChanged();
+        _testResult = await Tester.RunAsync(script.Path);
+    }
+
+    private void Duplicate(ScriptInfo script)
+    {
+        try { Ok($"Copie créée : {Store.Duplicate(script.Id)}"); }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    private async Task CopyName(ScriptInfo script)
+    {
+        try { await JS.InvokeAsync<bool>("deck.copyText", script.Id); Ok($"« {script.Id} » copié."); }
+        catch (Exception) { /* presse-papiers indisponible */ }
+    }
+
+    private void MoveScript(string target)
+    {
+        var script = _moving;
+        _moving = null;
+        if (script is null) return;
+
+        try
+        {
+            var folder = target == "/" ? string.Empty : target;
+            Store.SetFolder(script.Id, folder);
+            Ok($"« {script.Id} » déplacé vers {(target == "/" ? "la racine" : $"« {target} »")}.");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    private void MoveFolderTo(string target)
+    {
+        var folder = _movingFolder;
+        _movingFolder = null;
+        if (folder is null) return;
+
+        try
+        {
+            var moved = Store.MoveFolder(folder.Path, target == "/" ? string.Empty : target);
+            if (_folder.Equals(folder.Path, StringComparison.OrdinalIgnoreCase)) _folder = moved;
+            Ok($"Dossier déplacé : {moved}");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    private void SortCurrentFolder()
+    {
+        try
+        {
+            Store.SortFolder(_folder);
+            Ok("Dossier trié par ordre alphabétique.");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    // ----- Personnalisation (icône, couleur) -----
+
+    // ----- Zones de travail -----
+
+    private bool _creatingWorkspace;
+    private string? _renamingWorkspace;
+    private string? _customizingWorkspace;
+    private string? _deletingWorkspace;
+    private string _newWorkspaceName = "";
+
+    private void CloseWorkspaceDialogs()
+    {
+        _creatingWorkspace = false;
+        _renamingWorkspace = null;
+        _newWorkspaceName = "";
+    }
+
+    private void CreateWorkspace()
+    {
+        try
+        {
+            Store.CreateWorkspace(_newWorkspaceName);
+            SwitchWorkspace(_newWorkspaceName.Trim());
+            Ok($"Zone de travail « {_newWorkspaceName.Trim()} » créée.");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        CloseWorkspaceDialogs();
+        Refresh();
+    }
+
+    private void RenameWorkspaceConfirm()
+    {
+        var old = _renamingWorkspace;
+        if (old is null) return;
+
+        try
+        {
+            Store.RenameWorkspace(old, _newWorkspaceName);
+            if (_workspace.Equals(old, StringComparison.OrdinalIgnoreCase)) _workspace = _newWorkspaceName.Trim();
+            Ok("Zone de travail renommée.");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        CloseWorkspaceDialogs();
+        Refresh();
+    }
+
+    private void ApplyWorkspaceAppearance((string Icon, string Color) v)
+    {
+        var name = _customizingWorkspace;
+        if (name is null) return;
+
+        try { Store.SetWorkspaceAppearance(name, v.Icon, v.Color); }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    private void ConfirmDeleteWorkspace()
+    {
+        var name = _deletingWorkspace;
+        _deletingWorkspace = null;
+        if (name is null) return;
+
+        try
+        {
+            Store.DeleteWorkspace(name);
+            if (_workspace.Equals(name, StringComparison.OrdinalIgnoreCase)) SwitchWorkspace("");
+            Ok($"Zone de travail « {name} » supprimée (son contenu est revenu Par défaut).");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    private ScriptInfo? _customizing;
+    private FolderInfo? _customizingFolder;
+
+    private static string AppearanceStyle(string color) => color.Length > 0 ? $"background:{color}22;color:{color}" : "";
+
+    private void ApplyScriptAppearance((string Icon, string Color) v)
+    {
+        var script = _customizing;
+        if (script is null) return;
+
+        try { Store.SetScriptAppearance(script.Id, v.Icon, v.Color); }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+        _customizing = _scripts.FirstOrDefault(s => s.Id.Equals(script.Id, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void ApplyFolderAppearance((string Icon, string Color) v)
+    {
+        var folder = _customizingFolder;
+        if (folder is null) return;
+
+        try { Store.SetFolderAppearance(folder.Path, v.Icon, v.Color); }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+        _customizingFolder = _folders.FirstOrDefault(f => f.Path.Equals(folder.Path, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void ToggleScriptEnabled(ScriptInfo script)
+    {
+        try
+        {
+            Store.SetScriptEnabled(script.Id, !script.Enabled);
+            Ok(script.Enabled ? $"« {script.Id} » désactivé : le serveur refusera de le lancer." : $"« {script.Id} » activé.");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    private void ToggleFolderEnabled(FolderInfo folder)
+    {
+        try
+        {
+            Store.SetFolderEnabled(folder.Path, !folder.Enabled);
+            Ok(folder.Enabled ? $"Dossier « {folder.Path} » désactivé : le serveur refusera tous ses scripts." : $"Dossier « {folder.Path} » activé.");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        Refresh();
+    }
+
+    private void ConfirmDelete()
+    {
+        if (_deleting is null) return;
+
+        try
+        {
+            Store.Delete(_deleting.Id);
+            Schedules.DeleteForScript(_deleting.Id);
+            Ok($"« {_deleting.Id} » supprimé.");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        _deleting = null;
+        Refresh();
+    }
+
+    // ----- Dossiers -----
+
+    private void AskNewFolder()
+    {
+        _folderName = string.Empty;
+        _nameError = null;
+        _nameDialog = NameDialog.New;
+    }
+
+    private void AskRename(FolderInfo folder)
+    {
+        _renaming = folder;
+        _folderName = folder.Name;
+        _nameError = null;
+        _nameDialog = NameDialog.Rename;
+    }
+
+    private void CloseNameDialog()
+    {
+        _nameDialog = NameDialog.None;
+        _renaming = null;
+    }
+
+    private void OnNameKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") SubmitName();
+    }
+
+    private void SubmitName()
+    {
+        _nameError = ScriptStore.NameError(_folderName);
+        if (_nameError is not null) return;
+
+        try
+        {
+            if (_nameDialog == NameDialog.Rename && _renaming is not null)
+            {
+                var renamed = Store.RenameFolder(_renaming.Path, _folderName.Trim());
+                if (_folder.Equals(_renaming.Path, StringComparison.OrdinalIgnoreCase)) _folder = renamed;
+                Ok($"Dossier renommé : {renamed}");
+            }
+            else
+            {
+                var path = _folder.Length == 0 ? _folderName.Trim() : _folder + "/" + _folderName.Trim();
+                Store.CreateFolder(path);
+                Ok($"Dossier créé : {path}");
+            }
+
+            CloseNameDialog();
+        }
+        catch (Exception ex)
+        {
+            _nameError = ex.Message;
+            return;
+        }
+
+        Refresh();
+    }
+
+    private void ConfirmDeleteFolder()
+    {
+        if (_deletingFolder is null) return;
+
+        try
+        {
+            Store.DeleteFolder(_deletingFolder.Path, includeContents: true);
+            Ok($"Dossier « {_deletingFolder.Path} » supprimé.");
+        }
+        catch (Exception ex) { Fail(ex); }
+
+        _deletingFolder = null;
+        Refresh();
+    }
+}

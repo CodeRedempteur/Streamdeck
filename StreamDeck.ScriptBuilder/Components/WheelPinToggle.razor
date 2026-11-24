@@ -1,0 +1,47 @@
+@* v1.38 — Puces « Roues » d'une touche du widget : un clic ajoute le script de la touche à une roue WheelConvert, un
+   second clic l'en retire. Les roues elles-mêmes se créent dans l'onglet « Roues ».
+   Exemple : <WheelPinToggle ScriptName="@pin.ScriptName" Icon="@pin.Icon" Color="@pin.Color" /> *@
+@implements IDisposable
+@inject BuilderConfigService Config
+@inject WheelBridgeService Bridge
+@inject NavigationManager Nav
+
+@if (!string.IsNullOrWhiteSpace(ScriptName))
+{
+    <div class="settings-variable-head" style="flex-wrap:wrap;gap:6px">
+        <span class="settings-label" style="margin:0 4px 0 0"><i class="fa-solid fa-circle-notch"></i> Roues</span>
+        @if (Config.Current.WheelConvertWheels.Count == 0)
+        {
+            <button type="button" class="settings-btn" @onclick='() => Nav.NavigateTo("/wheels")' title="Créer une roue WheelConvert (onglet Roues)">
+                <i class="fa-solid fa-plus"></i><span>Créer une roue</span>
+            </button>
+        }
+        else
+        {
+            var inWheels = Bridge.WheelsContaining(ScriptName).Select(w => w.Id).ToHashSet();
+            @foreach (var wheel in Config.Current.WheelConvertWheels)
+            {
+                bool active = inWheels.Contains(wheel.Id);
+                <button type="button" class="settings-btn"
+                        style="@(active ? $"background:{wheel.Color};border-color:{wheel.Color};color:#fff" : "opacity:.75")"
+                        @onclick="() => Bridge.ToggleScript(wheel.Id, ScriptName, Icon, Color)"
+                        title="@(active ? $"Retirer de la roue « {wheel.Name} »" : $"Ajouter à la roue « {wheel.Name} »")">
+                    <i class="@(active ? "fa-solid fa-check" : (string.IsNullOrWhiteSpace(wheel.Icon) ? "fa-solid fa-circle-notch" : wheel.Icon))"></i>
+                    <span>@wheel.Name</span>
+                </button>
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string ScriptName { get; set; } = "";
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public string? Color { get; set; }
+
+    protected override void OnInitialized() => Config.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Config.Changed -= OnChanged;
+}

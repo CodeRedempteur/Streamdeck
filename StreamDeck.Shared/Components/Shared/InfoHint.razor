@@ -1,0 +1,23 @@
+@* v1.34.13 : remplace les explications "i" toujours visibles (un <p class="settings-hint"> avec une icône
+   fa-circle-info devant, affiché en permanence — remonté comme prenant "enormement de place") par une bulle qui
+   n'apparaît qu'au survol (ou au focus clavier, pour rester accessible sans souris) de l'icône elle-même. Composant
+   partagé (StreamDeck.Shared) plutôt que dupliqué : utilisable pareil depuis les trois apps (ScriptBuilder, Android,
+   Desktop). Ne remplace QUE les vraies notes explicatives — pas les messages de statut temporaires (ex. "code PIN
+   défini"), les confirmations (fa-circle-check) ni les erreurs (fa-triangle-exclamation), qui doivent rester visibles
+   en permanence. *@
+<span class="info-hint @(RightAligned ? "is-right-aligned" : "")" tabindex="0" role="note" aria-label="Info">
+    <i class="fa-solid fa-circle-info"></i>
+    <span class="info-hint-bubble">@ChildContent</span>
+</span>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// v1.34.15 : la bulle s'ouvre par défaut en s'alignant sur le bord GAUCHE de l'icône (déborde à droite si besoin) —
+    /// correct pour la grande majorité des icônes, posées près du bord gauche d'une carte/d'un champ. Pour une icône
+    /// posée près du bord DROIT de l'écran (rare, ex. un en-tête), passer true pour aligner la bulle sur le bord droit
+    /// à la place (déborde à gauche), afin que le début du texte reste toujours visible plutôt que coupé.
+    /// </summary>
+    [Parameter] public bool RightAligned { get; set; }
+}

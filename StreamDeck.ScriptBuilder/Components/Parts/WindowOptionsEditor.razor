@@ -1,0 +1,99 @@
+<div class="wopt">
+    @if (ShowEnable)
+    {
+        <ToggleSwitch Label="Gérer la fenêtre après le lancement"
+                      Description="Attend la fenêtre, puis la place sur un écran, la maximise ou la met en plein écran."
+                      Value="Options.Enabled" ValueChanged="SetEnabled" />
+    }
+
+    @if (Options.Enabled || !ShowEnable)
+    {
+        <div class="wopt-grid">
+            @if (ShowProcess)
+            {
+                <div class="wopt-span">
+                    <ProcessNameField Label="Nom du processus à surveiller" Value="@Options.ProcessName" ValueChanged="SetProcess"
+                                      Placeholder="@(string.IsNullOrEmpty(DefaultProcess) ? "ex : Steam, chrome, Nexaflow" : DefaultProcess)"
+                                      Hint="@ProcessHint" />
+                </div>
+            }
+
+            <ChoiceField Label="Écran" Items="ScreenChoices" Value="@Options.Screen.ToString()" ValueChanged="SetScreen"
+                         PickerIcon="fa-solid fa-display" />
+            <ChoiceField Label="Fenêtre" Items="StateChoices" Value="@Options.State.ToString()" ValueChanged="SetState"
+                         PickerIcon="fa-solid fa-window-maximize" />
+
+            @if (ShowWait)
+            {
+                <label class="settings-field">
+                    <span class="settings-label">Attendre la fenêtre (secondes)</span>
+                    <span class="settings-input settings-input-plain">
+                        <input type="number" min="1" max="600" value="@Options.WaitSeconds" @onchange="SetWait" aria-label="Délai d'attente" />
+                    </span>
+                </label>
+            }
+
+            @if (ShowForeground)
+            {
+                <div class="wopt-span">
+                    <ToggleSwitch Label="Mettre devant les autres fenêtres" Value="Options.Foreground" ValueChanged="SetForeground" />
+                </div>
+            }
+        </div>
+
+        @if (Options.State == WindowState.Fullscreen)
+        {
+            <p class="settings-hint">Plein écran : la fenêtre est maximisée puis reçoit la touche F11. Si le programme est déjà en plein écran, F11 le ferait sortir du plein écran.</p>
+        }
+    }
+</div>
+
+@code {
+    private static readonly IReadOnlyList<ChoiceItem> ScreenChoices = new List<ChoiceItem>
+    {
+        new(WindowOptions.ScreenKeep.ToString(), "Ne pas déplacer", "Reste où le programme s'ouvre", "fa-solid fa-arrows-up-down-left-right"),
+        new("0", "Écran 1", "Le plus à gauche", "fa-solid fa-display"),
+        new("1", "Écran 2", "Le suivant vers la droite", "fa-solid fa-display"),
+        new("2", "Écran 3", null, "fa-solid fa-display"),
+        new(WindowOptions.ScreenRightmost.ToString(), "Écran le plus à droite", "Quel que soit le nombre d'écrans", "fa-solid fa-display")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> StateChoices = new List<ChoiceItem>
+    {
+        new(nameof(WindowState.Keep), "Ne pas changer", null, "fa-solid fa-minus"),
+        new(nameof(WindowState.Maximize), "Maximisée", "Remplit l'écran, avec la barre de titre", "fa-solid fa-window-maximize"),
+        new(nameof(WindowState.Fullscreen), "Plein écran (F11)", "Sans bordures ni barre de titre", "fa-solid fa-expand"),
+        new(nameof(WindowState.Minimize), "Réduite", "Envoyée dans la barre des tâches", "fa-solid fa-window-minimize"),
+        new(nameof(WindowState.Restore), "Taille normale", "Restaurée", "fa-solid fa-window-restore")
+    };
+
+    [Parameter, EditorRequired] public WindowOptions Options { get; set; } = new();
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    /// <summary>Affiche l'interrupteur « Gérer la fenêtre » (étape Ouvrir). Sinon la gestion est toujours active.</summary>
+    [Parameter] public bool ShowEnable { get; set; }
+    [Parameter] public bool ShowProcess { get; set; }
+    [Parameter] public bool ShowWait { get; set; } = true;
+    [Parameter] public bool ShowForeground { get; set; } = true;
+
+    /// <summary>Nom de processus déduit du programme (affiché en indication).</summary>
+    [Parameter] public string? DefaultProcess { get; set; }
+
+    private string? ProcessHint => string.IsNullOrEmpty(DefaultProcess)
+        ? "Le nom du programme dans le Gestionnaire des tâches, sans « .exe »."
+        : $"Laisse vide pour utiliser « {DefaultProcess} » (déduit du programme).";
+
+    private Task Changed() => OnChanged.InvokeAsync();
+
+    private Task SetEnabled(bool v) { Options.Enabled = v; return Changed(); }
+    private Task SetProcess(string v) { Options.ProcessName = v; return Changed(); }
+    private Task SetScreen(string v) { if (int.TryParse(v, out var n)) Options.Screen = n; return Changed(); }
+    private Task SetState(string v) { if (Enum.TryParse<WindowState>(v, out var s)) Options.State = s; return Changed(); }
+    private Task SetForeground(bool v) { Options.Foreground = v; return Changed(); }
+
+    private Task SetWait(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var n)) Options.WaitSeconds = Math.Clamp(n, 1, 600);
+        return Changed();
+    }
+}

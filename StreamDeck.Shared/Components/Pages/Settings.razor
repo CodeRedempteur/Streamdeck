@@ -1,0 +1,136 @@
+@page "/settings"
+@implements IDisposable
+@inject ConfigService Config
+@inject NavigationManager Nav
+@inject IAppPlatform Platform
+@inject SecurityService Security
+
+<div class="settings">
+    <header class="settings-head">
+        <a class="settings-btn settings-btn-icon" href="/" aria-label="Retour" title="Retour sans enregistrer">
+            <i class="fa-solid fa-arrow-left"></i>
+        </a>
+        <div class="settings-title">
+            <h1>Réglages</h1>
+            <p>PC, boutons, sécurité et confort</p>
+        </div>
+        @if (!IsLocked)
+        {
+            <button type="button" class="settings-btn settings-btn-primary" @onclick="Save">
+                <i class="fa-solid fa-floppy-disk"></i><span>Enregistrer</span>
+            </button>
+        }
+    </header>
+
+    @if (IsLocked)
+    {
+        <section class="settings-card settings-lock">
+            <div class="settings-card-head">
+                <span class="settings-chip"><i class="fa-solid fa-lock"></i></span>
+                <div>
+                    <h2>Réglages verrouillés</h2>
+                    <p>Entre ton code PIN pour continuer.</p>
+                </div>
+            </div>
+            <PinPad OnSubmit="Unlock" />
+        </section>
+    }
+    else
+    {
+        <DiagnosticsSection />
+        <PcSection State="_state" />
+        <WorkspaceSection State="_state" />
+        <PagesSection State="_state" />
+        <VoiceSection State="_state" />
+        <SecuritySection State="_state" />
+        <ComfortSection State="_state" />
+        <BackupSection State="_state" />
+        <PcTargetSection State="_state" />
+        <FindPhoneSection State="_state" />
+        <PhoneServerSection State="_state" />
+
+        @if (Platform.CanQuit)
+        {
+            <section class="settings-card">
+                <div class="settings-card-head">
+                    <span class="settings-chip"><i class="fa-solid fa-gear"></i></span>
+                    <div>
+                        <h2>Application</h2>
+                        <p>Ferme l'application (elle se relancera à la prochaine ouverture de session).</p>
+                    </div>
+                </div>
+
+                <button type="button" class="settings-btn settings-btn-danger" @onclick="Quit">
+                    <i class="fa-solid fa-power-off"></i><span>Quitter l'application</span>
+                </button>
+            </section>
+        }
+    }
+</div>
+
+<IconPicker Open="_state.IconPickerOpen" Current="@_state.IconCurrent" OnPick="PickIcon" OnClose="CloseIconPicker" />
+
+@code {
+    private EditorState _state = default!;
+    private bool _unlocked;
+
+    // Le verrou se base sur la configuration enregistrée, pas sur la copie en cours d'édition.
+    private bool IsLocked => !_unlocked && Config.Current.Security.LockSettings && Config.Current.Security.HasPin;
+
+    protected override void OnInitialized()
+    {
+        // On édite une copie : rien n'est appliqué tant qu'on n'a pas enregistré.
+        var cfg = Config.Current.Clone();
+        var workspace = cfg.ActiveWorkspace;
+        _state = new EditorState(cfg, Config.GetPageIndex(workspace));
+        _state.Changed += OnStateChanged;
+    }
+
+    private void OnStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private PinPad.Feedback Unlock(string pin)
+    {
+        var check = Security.Check(Config.Current.Security, pin);
+        if (check.Ok)
+        {
+            _unlocked = true;
+            return new PinPad.Feedback(true);
+        }
+
+        return check.LockedFor is { } wait
+            ? new PinPad.Feedback(false, $"Trop d'essais : réessaie dans {(int)Math.Ceiling(wait.TotalSeconds)} s")
+            : new PinPad.Feedback(false, "Code incorrect");
+    }
+
+    private void PickIcon(string cls) => _state.PickIcon(cls);
+    private void CloseIconPicker() => _state.CloseIconPicker();
+
+    private void Save()
+    {
+        var cfg = _state.Cfg;
+
+        foreach (var pc in cfg.Pcs)
+        {
+            pc.Name = pc.Name.Trim();
+            pc.ServerUrl = pc.ServerUrl.Trim();
+            pc.Token = pc.Token.Trim();
+            pc.Mac = pc.Mac.Trim();
+        }
+
+        cfg.ActiveWorkspaceId = _state.Ws.Id;
+        var workspaceId = _state.WorkspaceId;
+        var pageIndex = _state.PageIndex;
+
+        Config.Save(cfg);
+
+        // Retour sur l'espace et la page qu'on vient d'éditer.
+        var saved = Config.Current.Workspaces.FirstOrDefault(w => w.Id == workspaceId);
+        if (saved is not null) Config.SetPageIndex(saved, pageIndex);
+
+        Nav.NavigateTo("/");
+    }
+
+    private void Quit() => Platform.Quit();
+
+    public void Dispose() => _state.Changed -= OnStateChanged;
+}

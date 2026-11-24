@@ -1,0 +1,1165 @@
+@* Espaces de travail et pages du widget de bureau — jusqu'à v1.33.0 vivait dans les Réglages avec tout le reste
+   (apparence, boîtes mail) ; en v1.34.0 tout était passé ici dans un onglet séparé, mais retour partiel en v1.34.1 :
+   seule la composition des pages (qui bénéficie du visuel en grille de cartes) reste ici — l'apparence du widget et
+   la configuration des boîtes mail sont revenues dans les Réglages (StreamDeck.ScriptBuilder/Components/Pages/Settings.razor).
+   Les touches épinglées n'ont plus de catalogue global séparé (v1.34.1) : chaque bloc « Touches » d'une page crée,
+   modifie et retire ses propres touches directement. *@
+@inject BuilderConfigService Config
+@inject ScriptStore Store
+@inject INativePicker Picker
+@inject IJSRuntime JS
+@inject WeatherService Weather
+@inject NavigationManager Nav
+@inject IPcSpeechRecognizer Speech
+@inject IPcVoiceListener VoiceListener
+
+@* Même présentation "à plat" que la bibliothèque de scripts (Library.razor) — zones de travail en puces puis une
+   grille de cartes juste en dessous, sans les encadrer dans un bloc de type "Réglages" (v1.34.2) : les deux onglets
+   listent des choses à parcourir/composer plutôt qu'un formulaire, donc le même visuel que Scripts plutôt que celui
+   des Réglages, qui reste réservé aux vrais formulaires (apparence, boîtes mail…). *@
+<div class="widget-config-panel" @onmouseup="CancelPageDrag">
+<div class="settings-hint-row"><InfoHint>Comme les espaces/écrans d'accueil de l'appli mobile : regroupe des pages dans un espace nommé — bascule rapidement de l'un à l'autre directement depuis le widget (icône en haut à gauche). Fais glisser une page sur un autre espace ci-dessous pour l'y déplacer.</InfoHint></div>
+
+@* Page de veille : réglage global de DÉCLENCHEMENT (activée/non, minutage) — QUELLES pages y participent se choisit
+   PAR PAGE depuis v1.34.6 (fenêtre "Modifier" d'une page, voir plus bas ShowInIdle/IdleOnly) : sur demande explicite,
+   plusieurs pages différentes peuvent alterner en veille plutôt qu'une seule désignée ici globalement (v1.34.5). *@
+<div class="settings-variable" style="margin-bottom:16px">
+    <div class="settings-variable-head">
+        <ToggleSwitch Value="Config.Current.WidgetIdleEnabled" ValueChanged="SetIdleEnabled" Label="Page de veille" />
+    </div>
+    @if (Config.Current.WidgetIdleEnabled)
+    {
+        <div class="settings-variable-head" style="flex-wrap:wrap;gap:12px">
+            <label class="settings-variable-bounds" style="margin:0">
+                <span>Délai avant affichage (secondes)</span>
+                <span class="settings-input settings-input-plain" style="max-width:90px">
+                    <input type="number" min="1" value="@Config.Current.WidgetIdleDelaySeconds" @onchange='e => SetIdleDelay((string?)e.Value ?? "")' />
+                </span>
+            </label>
+            <label class="settings-variable-bounds" style="margin:0">
+                <span>Transition (ms)</span>
+                <span class="settings-input settings-input-plain" style="max-width:90px">
+                    <input type="number" min="0" value="@Config.Current.WidgetIdleTransitionMs" @onchange='e => SetIdleTransition((string?)e.Value ?? "")' />
+                </span>
+            </label>
+            <label class="settings-variable-bounds" style="margin:0">
+                <span>Alternance si plusieurs pages (secondes)</span>
+                <span class="settings-input settings-input-plain" style="max-width:90px">
+                    <input type="number" min="1" value="@Config.Current.WidgetIdleRotateSeconds" @onchange='e => SetIdleRotateSeconds((string?)e.Value ?? "")' />
+                </span>
+            </label>
+        </div>
+    }
+    <div class="settings-hint-row"><InfoHint>Une fois activée, choisis pour CHAQUE page (bouton « Modifier ») si elle participe à la veille — le widget y bascule (en alternant s'il y en a plusieurs) s'il n'est pas survolé pendant le délai réglé, et redevient normal dès que la souris revient dessus.</InfoHint></div>
+</div>
+
+@* Commande vocale depuis le PC (v1.35, demandé explicitement : "autorisation de trigger ces bouton par la voix
+   depuis le pc") : réglage global (activer/mot de réveil/minutage) — le déclencheur de CHAQUE touche se règle plus
+   bas, dans l'éditeur de la touche elle-même (comme VoiceTriggers côté téléphone). *@
+<div class="settings-variable" style="margin-bottom:16px">
+    <div class="settings-variable-head">
+        <ToggleSwitch Value="Config.Current.WidgetVoice.Enabled" ValueChanged="SetVoiceEnabled" Label="Commande vocale depuis le PC" />
+    </div>
+    @if (Config.Current.WidgetVoice.Enabled)
+    {
+        <div class="settings-variable-head" style="flex-wrap:wrap;gap:12px">
+            <label class="settings-variable-bounds" style="margin:0">
+                <span>Mot de réveil</span>
+                <span class="settings-input settings-input-plain" style="max-width:160px">
+                    <input value="@Config.Current.WidgetVoice.WakeWord" @onchange='e => SetVoiceWakeWord((string?)e.Value ?? "")' autocomplete="off" spellcheck="false" />
+                </span>
+            </label>
+            <label class="settings-variable-bounds" style="margin:0">
+                <span>Reste à l'écoute (secondes)</span>
+                <span class="settings-input settings-input-plain" style="max-width:90px">
+                    <input type="number" min="1" value="@Config.Current.WidgetVoice.AwakeSeconds" @onchange='e => SetVoiceAwakeSeconds((string?)e.Value ?? "")' />
+                </span>
+            </label>
+        </div>
+        @if (!VoiceListener.Available)
+        {
+            <p class="settings-hint is-error">Reconnaissance vocale continue non disponible sur cet appareil.</p>
+        }
+    }
+    <div class="settings-hint-row"><InfoHint>Dis le mot de réveil puis le déclencheur réglé sur une touche (ci-dessous, « Touches » d'une page) pour la lancer sans toucher au clavier. Fonctionne tant que l'application reste ouverte (widget réduit ou non). Nécessite Windows.</InfoHint></div>
+</div>
+
+<nav class="lib-workspaces" aria-label="Widget">
+    <button type="button" class="@(_widgetTab == "pages" ? "lib-workspace is-on" : "lib-workspace")" @onclick='() => _widgetTab = "pages"'>
+        <i class="fa-solid fa-layer-group"></i><span>Pages</span>
+    </button>
+    <button type="button" class="@(_widgetTab == "phone" ? "lib-workspace is-on" : "lib-workspace")" @onclick='() => _widgetTab = "phone"'>
+        <i class="fa-solid fa-mobile-screen-button"></i><span>Modèles téléphone</span>
+    </button>
+</nav>
+
+@if (_widgetTab == "phone")
+{
+    @* v1.35, demandé explicitement ("permet d'importé des page config pour le tel directement sur le widget" +
+       "utilise la meme interphase que la page telephone je laime bien") : même composant que l'onglet « Téléphone »
+       à part entière (PhoneTemplates.razor) — voir PhoneTemplatesPanel.razor. *@
+    <PhoneTemplatesPanel />
+}
+else
+{
+<nav class="lib-workspaces" aria-label="Espaces de travail du widget">
+        @foreach (var ws in Config.Current.WidgetWorkspaces)
+        {
+            <button type="button" class="@WorkspaceChipClass(ws)" @onclick="() => _selectedWorkspaceId = ws.Id"
+                    @onmouseenter="() => HoverWorkspaceForDrop(ws.Id)" @onmouseleave="UnhoverWorkspaceForDrop" @onmouseup="() => DropPageOnWorkspace(ws)"
+                    title="@(ws.Name.Length == 0 ? "Espace" : ws.Name)">
+                <i class="fa-solid fa-layer-group"></i><span>@(ws.Name.Length == 0 ? "Espace" : ws.Name)</span>
+                @if (ws.Active)
+                {
+                    <i class="fa-solid fa-circle-check" title="Actif sur le widget"></i>
+                }
+            </button>
+        }
+        <button type="button" class="lib-workspace lib-workspace-add" @onclick="AddWorkspace" title="Nouvel espace de travail"><i class="fa-solid fa-plus"></i></button>
+    </nav>
+
+    @if (SelectedWorkspace is { } workspace)
+    {
+        <div class="settings-variable-head">
+            <span class="settings-input settings-input-plain" style="flex:1">
+                <input value="@workspace.Name" @onchange='e => RenameWorkspace(workspace, (string?)e.Value ?? "")' placeholder="Nom de l'espace" autocomplete="off" spellcheck="false" />
+            </span>
+            @* v1.34.12, clarifié après plusieurs allers-retours : "Actif sur le widget" est un choix MULTIPLE (plusieurs
+               espaces peuvent l'être à la fois, actif par défaut) — mais ça ne fusionne PAS leurs pages normales :
+               chaque espace garde les siennes, un seul reste "affiché" à la fois (choisi via le sélecteur du widget,
+               parmi les espaces actifs). Être actif veut dire deux choses à la fois : apparaître dans ce sélecteur, ET
+               que ses pages "Afficher en veille" participent au carrousel de veille — affiché ou non. Un seul réglage,
+               pas deux séparés (les versions précédentes avaient un second interrupteur "aussi actif pour la veille"
+               distinct, retiré : ça ne correspondait pas à ce qui était demandé). *@
+            <ToggleSwitch Value="workspace.Active" ValueChanged="@(v => SetWorkspaceActive(workspace, v))" Label="Actif sur le widget (plusieurs espaces peuvent l'être à la fois)" />
+            <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" disabled="@(Config.Current.WidgetWorkspaces.Count <= 1)" @onclick="() => RemoveWorkspace(workspace)" aria-label="Supprimer cet espace" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
+        </div>
+
+        <ul class="lib-items is-cards">
+            @for (var i = 0; i < workspace.Pages.Count; i++)
+            {
+                var index = i;
+                var page = workspace.Pages[index];
+                <li class="@PageCardClass(page, index)" id="@PageElementId(page.Id)">
+                    <div class="lib-card-main" @onmouseenter="() => HoverPageIndex(index)" @onmouseleave="UnhoverPageIndex" @onmouseup="() => DropOnPageIndex(workspace, index)">
+                        <span class="lib-grab" title="Glisser pour déplacer cette page" aria-label="Glisser pour déplacer"
+                              @onmousedown="e => OnDragStartPage(e, workspace, page)" @onmousedown:preventDefault>
+                            <i class="fa-solid fa-grip-vertical"></i>
+                        </span>
+                        <span class="lib-card-icon"><i class="fa-solid fa-layer-group"></i></span>
+                        <span class="lib-card-text">
+                            <span class="settings-input settings-input-plain" style="width:100%" @onclick:stopPropagation="true">
+                                <input value="@(page.Name)" placeholder="@DefaultPageName(index)" @onchange='e => RenamePage(workspace, page, (string?)e.Value ?? "")' autocomplete="off" spellcheck="false" />
+                            </span>
+                            <span class="lib-card-meta">
+                                @if (page.Blocks.Count == 0)
+                                {
+                                    <span class="lib-badge is-off">page vide</span>
+                                }
+                                else
+                                {
+                                    @foreach (var summary in PageBlockSummaries(page))
+                                    {
+                                        <span class="lib-badge">@summary</span>
+                                    }
+                                }
+                                @if (page.ShowInIdle)
+                                {
+                                    <span class="lib-badge" title="Participe à la page de veille"><i class="fa-solid fa-moon"></i> @(page.IdleOnly ? "veille seule" : "veille")</span>
+                                }
+                            </span>
+                        </span>
+                    </div>
+                    <div class="lib-card-actions">
+                        <button type="button" class="settings-btn settings-btn-icon" disabled="@(index == 0)" @onclick="() => MoveWorkspacePage(workspace, index, -1)" @onclick:stopPropagation="true" title="Déplacer avant"><i class="fa-solid fa-arrow-left"></i></button>
+                        <button type="button" class="settings-btn settings-btn-icon" disabled="@(index == workspace.Pages.Count - 1)" @onclick="() => MoveWorkspacePage(workspace, index, 1)" @onclick:stopPropagation="true" title="Déplacer après"><i class="fa-solid fa-arrow-right"></i></button>
+                        <button type="button" class="settings-btn" @onclick="() => OpenPageEditor(page)" @onclick:stopPropagation="true"><i class="fa-solid fa-pen"></i><span>Modifier</span></button>
+                        <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveWorkspacePage(workspace, page)" @onclick:stopPropagation="true" aria-label="Retirer cette page" title="Retirer"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </li>
+            }
+            @* Carte "ajouter" en pointillés, dans la même grille que les pages (v1.34.3, correctif : le bouton
+               "Ajouter une page" était auparavant une ligne à part, posée au hasard sous la grille). *@
+            <li class="lib-card lib-card-add" @onclick="() => AddWorkspacePage(workspace)" role="button" tabindex="0" title="Ajouter une page">
+                <span class="lib-card-add-icon"><i class="fa-solid fa-plus"></i></span>
+                <span>Ajouter une page</span>
+            </li>
+        </ul>
+        <div class="settings-hint-row"><InfoHint>Clique sur « Modifier » pour composer le contenu d'une page — plusieurs blocs du même type sont possibles (deux boîtes mail différentes, par exemple), et chaque bloc « Touches » a ses propres touches. Une page vide (plus rien dessus, ou boîte mail supprimée) n'apparaît simplement pas dans le carrousel du widget.</InfoHint></div>
+    }
+}
+</div>
+
+<AppearancePopup Open="_editingPin is not null" Title="@(_editingPin?.ScriptName ?? "")" Icon="@(_editingPin?.Icon ?? "")" Color="@(_editingPin?.Color ?? "")"
+                 OnApply="ApplyPinAppearance" OnClose="() => _editingPin = null" />
+
+<AppearancePopup Open="_editingOption is not null" Title="@(_editingOption?.Label ?? "")" Icon="@(_editingOption?.Icon ?? "")" Color="@(_editingOption?.Color ?? "")"
+                 OnApply="ApplyOptionAppearance" OnClose="() => _editingOption = null" />
+
+<Modal Open="EditingPage is not null" Title="@(EditingPage is null ? "Page" : (EditingPage.Name.Length > 0 ? EditingPage.Name : "Page"))" Icon="fa-solid fa-layer-group" Size="wide" OnClose="() => _editingPageId = null">
+    <ChildContent>
+        @if (EditingPage is not null && SelectedWorkspace is { } workspace)
+        {
+            var page = EditingPage;
+            <label class="settings-field">
+                <span class="settings-label">Nom de la page</span>
+                <span class="settings-input settings-input-plain">
+                    <input value="@(page.Name)" @onchange='e => RenamePage(workspace, page, (string?)e.Value ?? "")' autocomplete="off" spellcheck="false" />
+                </span>
+            </label>
+
+            @* Participation à la page de veille (v1.34.6) : par page plutôt qu'une seule page désignée globalement —
+               voir le réglage "Page de veille" tout en haut pour activer/régler le minutage de la veille elle-même. *@
+            <div class="settings-variable-head" style="flex-wrap:wrap;gap:12px;margin-bottom:14px">
+                <ToggleSwitch Value="page.ShowInIdle" ValueChanged="@(v => SetPageIdleFlags(workspace, page, v, page.IdleOnly))" Label="Afficher en veille" />
+                @if (page.ShowInIdle)
+                {
+                    <ToggleSwitch Value="page.IdleOnly" ValueChanged="@(v => SetPageIdleFlags(workspace, page, page.ShowInIdle, v))" Label="Uniquement en veille (masquée du carrousel normal)" />
+                }
+            </div>
+
+            @if (page.Blocks.Count == 0)
+            {
+                <div class="settings-hint-row"><InfoHint>Cette page est vide — ajoute-lui du contenu ci-dessous.</InfoHint></div>
+            }
+
+            @for (var i = 0; i < page.Blocks.Count; i++)
+            {
+                var idx = i;
+                var block = page.Blocks[idx];
+                <div class="settings-page-toggle-row">
+                    <span class="settings-page-block-label"><i class="@BlockIcon(block.Type)"></i> @BlockTitle(block)</span>
+
+                    @if (block.Type == "server")
+                    {
+                        <button type="button" class="settings-btn settings-btn-icon @(block.ShowServerPower ? "is-active" : "")" @onclick="() => SetBlockField(workspace, page, block, b => b.ShowServerPower = !b.ShowServerPower)" title="Marche/arrêt"><i class="fa-solid fa-power-off"></i></button>
+                        <button type="button" class="settings-btn settings-btn-icon @(block.ShowServerRestart ? "is-active" : "")" @onclick="() => SetBlockField(workspace, page, block, b => b.ShowServerRestart = !b.ShowServerRestart)" title="Redémarrer"><i class="fa-solid fa-rotate-right"></i></button>
+                        <button type="button" class="settings-btn settings-btn-icon @(block.ShowServerStopMacros ? "is-active" : "")" @onclick="() => SetBlockField(workspace, page, block, b => b.ShowServerStopMacros = !b.ShowServerStopMacros)" title="Arrêter les macros"><i class="fa-solid fa-hand"></i></button>
+                    }
+                    else if (block.Type == "mail")
+                    {
+                        <ChoiceField Items="MailAccountChoices" Value="@(block.MailAccountId ?? "")" ValueChanged="@(v => SetBlockMailAccount(workspace, page, block, v))" PickerIcon="fa-solid fa-envelope" />
+                        @* v1.34.10 : demandé explicitement — sur la page de veille, afficher soit un résumé ("X message(s),
+                           Y non lu(s)", par défaut) soit la liste complète des messages, au choix par bloc. *@
+                        <button type="button" class="settings-btn settings-btn-icon @(block.IdleShowFullMail ? "is-active" : "")"
+                                @onclick="() => SetBlockField(workspace, page, block, b => b.IdleShowFullMail = !b.IdleShowFullMail)"
+                                title="@(block.IdleShowFullMail ? "En veille : page complète (cliquer pour revenir au résumé)" : "En veille : résumé seulement (cliquer pour la page complète)")">
+                            <i class="fa-solid fa-list-ul"></i>
+                        </button>
+                    }
+                    else if (block.Type == "worldclock")
+                    {
+                        <span class="settings-input settings-input-plain" style="max-width:130px">
+                            <input value="@block.WorldClockLabel" @onchange='e => SetBlockField(workspace, page, block, b => b.WorldClockLabel = (string?)e.Value ?? "")' placeholder="Tokyo" autocomplete="off" spellcheck="false" />
+                        </span>
+                        <ChoiceField Items="TimeZoneChoices" Value="@block.WorldClockTimeZoneId" ValueChanged="@(v => SetWorldClockTimeZone(workspace, page, block, v))" PickerIcon="fa-solid fa-earth-americas" />
+                    }
+                    else if (block.Type == "todo")
+                    {
+                        <ChoiceField Items="TodoListChoices" Value="@(block.TodoListId ?? "")" ValueChanged="@(v => SetBlockTodoList(workspace, page, block, v))" PickerIcon="fa-solid fa-list-check" />
+                        <button type="button" class="settings-btn settings-btn-icon" @onclick='() => Nav.NavigateTo("/todos")' aria-label="Gérer les listes de tâches" title="Gérer les listes de tâches (dossiers, tâches, rappels…)"><i class="fa-solid fa-pen"></i></button>
+                    }
+                    else if (block.Type == "calendar")
+                    {
+                        @* v1.37.4, demandé explicitement ("un moyen d'afficher uniquement... la tâche de l'heure du
+                           jour actuelle / celle d'avant et celle d'après, actualisé en temps réel") : bascule un bloc
+                           "jour complet" (comportement d'avant) vers un bloc "focus" à 3 créneaux. En mode focus,
+                           c'est toujours AUJOURD'HUI (le jour choisi ci-dessous n'a plus de sens), donc ces réglages
+                           sont masqués plutôt que juste désactivés. *@
+                        <button type="button" class="settings-btn settings-btn-icon @(block.CalendarFocusMode ? "is-active" : "")"
+                                @onclick="() => SetBlockField(workspace, page, block, b => b.CalendarFocusMode = !b.CalendarFocusMode)"
+                                title="@(block.CalendarFocusMode ? "Mode focus actif : précédent / en cours / suivant, aujourd'hui, en temps réel (cliquer pour revenir au jour complet)" : "Afficher tout le jour choisi (cliquer pour passer en mode focus : précédent / en cours / suivant)")">
+                            <i class="fa-solid fa-bullseye"></i>
+                        </button>
+                        @if (!block.CalendarFocusMode)
+                        {
+                            <ChoiceField Items="CalendarDayModeChoices" Value="@block.CalendarDayMode" ValueChanged="@(v => SetBlockField(workspace, page, block, b => b.CalendarDayMode = v))" PickerIcon="fa-solid fa-calendar-day" />
+                            @if (block.CalendarDayMode == "offset")
+                            {
+                                <NumberStepper Value="@block.CalendarDayOffset" ValueChanged="@(v => SetBlockField(workspace, page, block, b => b.CalendarDayOffset = v))" Min="-365" Max="365" />
+                            }
+                            else if (block.CalendarDayMode == "specific")
+                            {
+                                <DateTimeField Value="@(block.CalendarSpecificDate?.ToDateTime(TimeOnly.MinValue))" AllowClear="false"
+                                               ValueChanged="@(v => SetBlockField(workspace, page, block, b => b.CalendarSpecificDate = v is { } dt ? DateOnly.FromDateTime(dt) : b.CalendarSpecificDate))" />
+                            }
+                        }
+                        @* v1.37.3, demandé explicitement ("permet de ne pas avoir le bouton Gérer calendrier daffiché") *@
+                        <button type="button" class="settings-btn settings-btn-icon @(block.CalendarShowManageButton ? "is-active" : "")"
+                                @onclick="() => SetBlockField(workspace, page, block, b => b.CalendarShowManageButton = !b.CalendarShowManageButton)"
+                                title="@(block.CalendarShowManageButton ? "Bouton « Gérer le calendrier » affiché (cliquer pour le masquer)" : "Bouton « Gérer le calendrier » masqué (cliquer pour l'afficher)")">
+                            <i class="fa-solid fa-calendar-days"></i>
+                        </button>
+                        <button type="button" class="settings-btn settings-btn-icon" @onclick='() => Nav.NavigateTo("/calendar")' aria-label="Gérer le calendrier" title="Gérer le calendrier (créneaux, notes, pièces jointes, réveils…)"><i class="fa-solid fa-pen"></i></button>
+                    }
+
+                    <button type="button" class="settings-btn settings-btn-icon" disabled="@(idx == 0)" @onclick="() => MoveBlock(workspace, page, idx, -1)" title="Monter"><i class="fa-solid fa-arrow-up"></i></button>
+                    <button type="button" class="settings-btn settings-btn-icon" disabled="@(idx == page.Blocks.Count - 1)" @onclick="() => MoveBlock(workspace, page, idx, 1)" title="Descendre"><i class="fa-solid fa-arrow-down"></i></button>
+                    <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemovePageBlock(workspace, page, block)" aria-label="Retirer ce bloc" title="Retirer ce bloc"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+
+                @if (block.Type == "pins")
+                {
+                    <div style="margin:0 0 14px 26px;display:grid;gap:8px">
+                        @foreach (var pin in PinsInBlock(block))
+                        {
+                            <div class="settings-variable" style="margin:0">
+                                <div class="settings-variable-head">
+                                    <button type="button" class="settings-tile settings-tile-sm@(pin.ImageOnly ? " pin-imageonly" : "")" style="width:44px;height:44px;--size:44px" @onclick="() => OpenPinAppearance(pin)" aria-label="Icône et couleur" title="Icône et couleur">
+                                        <KeyTile Button="@pin.ToDeckButton()" Interactive="false" ShowLabel="false" />
+                                        <span class="settings-tile-edit"><i class="fa-solid fa-pen"></i></span>
+                                    </button>
+                                    @if (pin.Kind != "picker")
+                                    {
+                                        <ChoiceField Items="ScriptChoices" Value="@pin.ScriptName" ValueChanged="@(v => SetPinScript(pin, v))" PickerIcon="fa-solid fa-scroll" />
+                                    }
+                                    else
+                                    {
+                                        <span class="settings-input settings-input-plain" style="flex:1">
+                                            <input value="@pin.ScriptName" @onchange="e => SetPinScript(pin, (string?)e.Value ?? pin.ScriptName)" placeholder="Nom de la touche (menu de choix)" autocomplete="off" spellcheck="false" />
+                                        </span>
+                                    }
+                                    <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemovePinFromBlock(workspace, page, block, pin)" aria-label="Retirer cette touche" title="Retirer cette touche"><i class="fa-solid fa-trash"></i></button>
+                                </div>
+
+                                @* v1.35, demandé explicitement ("on doit pouvoir avoir les choix multiple sur le widget") : même
+                                   principe qu'un bouton Picker côté téléphone — un popup de choix au clic, chaque choix lançant
+                                   son propre script (exécution locale, le widget tourne déjà sur ce PC). *@
+                                <div class="settings-variable-head">
+                                    <ChoiceField Label="Au clic" Items="PinKindChoices" Value="@pin.Kind" ValueChanged="@(v => SetPinKind(pin, v))" PickerIcon="fa-solid fa-hand-pointer" />
+                                </div>
+
+                                @* v1.38 : ajouter/retirer cette touche des roues WheelConvert en un clic (voir WheelPinToggle). *@
+                                @if (pin.Kind == "script")
+                                {
+                                    <WheelPinToggle ScriptName="@pin.ScriptName" Icon="@pin.Icon" Color="@pin.Color" />
+                                }
+
+                                @* v1.36, "possibilité de créer des timer... et donc sur pc aussi" : minuteur/chronomètre de cette touche. *@
+                                @if (pin.Kind == "timer")
+                                {
+                                    <TimerConfigEditor Config="pin.Timer" ScriptChoices="ScriptChoices" OnChanged="SaveTimerChange" />
+                                }
+
+                                @if (pin.Kind == "picker")
+                                {
+                                    <div style="margin:0 0 4px 0;display:grid;gap:6px">
+                                        @foreach (var opt in pin.Options)
+                                        {
+                                            <div class="settings-variable-head" style="gap:8px">
+                                                <button type="button" class="settings-tile settings-tile-sm" style="width:36px;height:36px;--size:36px" @onclick="() => OpenOptionAppearance(opt)" aria-label="Icône et couleur du choix" title="Icône et couleur">
+                                                    <KeyTile Button="@OptionPreviewButton(opt)" Interactive="false" ShowLabel="false" />
+                                                    <span class="settings-tile-edit"><i class="fa-solid fa-pen"></i></span>
+                                                </button>
+                                                <span class="settings-input settings-input-plain" style="max-width:150px">
+                                                    <input value="@opt.Label" @onchange="e => SetOptionLabel(pin, opt, (string?)e.Value ?? opt.Label)" placeholder="Nom du choix" autocomplete="off" spellcheck="false" />
+                                                </span>
+                                                <ChoiceField Items="ScriptChoices" Value="@opt.Script" ValueChanged="@(v => SetOptionScript(pin, opt, v))" PickerIcon="fa-solid fa-scroll" />
+                                                <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveOption(pin, opt)" aria-label="Retirer ce choix" title="Retirer ce choix"><i class="fa-solid fa-trash"></i></button>
+                                            </div>
+                                        }
+                                        <button type="button" class="settings-btn settings-btn-sm" @onclick="() => AddOption(pin)"><i class="fa-solid fa-plus"></i><span>Ajouter un choix</span></button>
+                                    </div>
+                                }
+
+                                <label class="settings-variable-bounds">
+                                    <span>Image (optionnelle, remplace l'icône)</span>
+                                    <div class="pathfield-row">
+                                        <span class="settings-input settings-input-plain">
+                                            <input value="@pin.ImageUrl" @onchange="e => SetPinImage(pin, (string?)e.Value)" placeholder="https://… ou un fichier importé" autocomplete="off" spellcheck="false" />
+                                        </span>
+                                        <button type="button" class="settings-btn pathfield-btn" @onclick="() => PickPinImage(pin)"><i class="fa-solid fa-upload"></i><span>Importer</span></button>
+                                        @if (!string.IsNullOrEmpty(pin.ImageUrl))
+                                        {
+                                            <button type="button" class="settings-btn settings-btn-icon" @onclick='() => SetPinImage(pin, "")' title="Revenir à l'icône"><i class="fa-solid fa-xmark"></i></button>
+                                        }
+                                    </div>
+                                    @if (_pinImageError is not null && _pinImageErrorFor == pin.Id)
+                                    {
+                                        <p class="settings-hint pathfield-error">@_pinImageError</p>
+                                    }
+                                </label>
+                                <div class="settings-variable-head">
+                                    <ToggleSwitch Value="pin.ImageOnly" ValueChanged="@(v => SetPinImageOnly(pin, v))" Label="Image seule (sans texte)" />
+                                </div>
+
+                                @* v1.36, "un bouton gâteau qui va lancer un timer" : minuteur démarré en plus de l'action normale. *@
+                                @if (pin.Kind != "timer")
+                                {
+                                    <div class="settings-variable-head">
+                                        <ToggleSwitch Value="@(pin.AttachedTimer is not null)" ValueChanged="@(v => SetPinAttachedTimerEnabled(pin, v))" Label="Minuteur en plus" />
+                                    </div>
+                                    @if (pin.AttachedTimer is not null)
+                                    {
+                                        <TimerConfigEditor Config="pin.AttachedTimer" ScriptChoices="ScriptChoices" OnChanged="SaveTimerChange" />
+                                    }
+                                }
+
+                                @* v1.35, demandé explicitement ("autorisation de trigger ces bouton par la voix depuis le pc") —
+                                   même principe que VoiceTriggers côté téléphone : phrase(s) reconnues par l'écoute continue du PC
+                                   (réglage global juste au-dessus des espaces de travail) pour lancer CETTE touche précise. *@
+                                <label class="settings-variable-bounds">
+                                    <span>Déclencheur(s) vocal PC (séparés par une virgule)</span>
+                                    <div class="pathfield-row">
+                                        <span class="settings-input settings-input-plain">
+                                            <input value="@VoiceTriggersText(pin)" @onchange='e => SetPinVoiceTriggers(pin, (string?)e.Value ?? "")' placeholder="ex: lance la musique" autocomplete="off" spellcheck="false" />
+                                        </span>
+                                        @if (Speech.Available)
+                                        {
+                                            <button type="button" class="settings-btn pathfield-btn" disabled="@(_recordingPinId is not null)" @onclick="() => RecordPinTrigger(pin)" title="Enregistrer une phrase au micro">
+                                                @if (_recordingPinId == pin.Id) { <i class="fa-solid fa-spinner fa-spin"></i> } else { <i class="fa-solid fa-microphone"></i> }
+                                            </button>
+                                        }
+                                    </div>
+                                </label>
+                                @if (pin.VoiceTriggers.Count > 0)
+                                {
+                                    <div class="settings-variable-head">
+                                        <ToggleSwitch Value="pin.VoiceRequiresWakeWord" ValueChanged="@(v => SetPinVoiceWake(pin, v))" Label="Nécessite le mot de réveil" />
+                                    </div>
+                                }
+                            </div>
+                        }
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+                            <button type="button" class="settings-btn settings-btn-sm" @onclick="() => AddPinToBlock(workspace, page, block)"><i class="fa-solid fa-plus"></i><span>Ajouter une touche</span></button>
+                            <label class="settings-variable-bounds" style="margin:0">
+                                <span>Colonnes</span>
+                                <ChoiceField Items="PinColumnsChoices" Value="@block.PinColumns.ToString()" ValueChanged="@(v => SetBlockPinColumns(workspace, page, block, v))" PickerIcon="fa-solid fa-grip" />
+                            </label>
+                        </div>
+                    </div>
+                }
+                else if (block.Type == "todo" && HiddenTodosOf(block) is { Count: > 0 } hiddenTodos)
+                {
+                    @* v1.34.15, demandé explicitement : les tâches retirées rapidement depuis le détail de la tâche
+                       (Widget.razor, HideTodo) ne sont pas supprimées — elles restent listées ici, réglages du bloc
+                       « Liste de tâches », pour être réactivées d'un clic. *@
+                    <div style="margin:0 0 14px 26px;display:grid;gap:6px">
+                        <span class="settings-label" style="margin:0">Tâches retirées de cette liste (@hiddenTodos.Count)</span>
+                        @foreach (var hidden in hiddenTodos)
+                        {
+                            <div class="settings-variable-head" style="justify-content:space-between">
+                                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@hidden.Text</span>
+                                <button type="button" class="settings-btn settings-btn-sm" @onclick="() => ShowTodo(block, hidden)"><i class="fa-solid fa-eye"></i><span>Réactiver</span></button>
+                            </div>
+                        }
+                    </div>
+                }
+                else if (block.Type == "weather")
+                {
+                    <div style="margin:0 0 14px 26px;display:grid;gap:8px;max-width:360px">
+                        <span class="settings-input settings-input-plain">
+                            <input value="@GetWeatherQuery(block)" @oninput='e => OnWeatherQueryChanged(block, (string?)e.Value ?? "")' placeholder="Rechercher une région (Genève, Paris…)" autocomplete="off" spellcheck="false" />
+                        </span>
+                        @if (_weatherResults.TryGetValue(block.Id, out var wresults) && wresults.Count > 0)
+                        {
+                            <div style="display:flex;flex-direction:column;gap:4px">
+                                @foreach (var r in wresults)
+                                {
+                                    <button type="button" class="settings-btn settings-btn-sm" style="justify-content:flex-start" @onclick="() => PickWeatherLocation(workspace, page, block, r)">
+                                        <i class="fa-solid fa-location-dot"></i><span>@r.DisplayName</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(block.WeatherLocationName))
+                        {
+                            <p class="settings-hint" style="margin:0"><i class="fa-solid fa-circle-check"></i> Région choisie : @block.WeatherLocationName</p>
+                        }
+                    </div>
+                }
+            }
+
+            <div class="settings-page-add-row">
+                <button type="button" class="settings-btn settings-btn-sm" @onclick='() => AddPageBlock(workspace, page, "clock")'><i class="fa-solid fa-clock"></i><span>Horloge</span></button>
+                <button type="button" class="settings-btn settings-btn-sm" @onclick='() => AddPageBlock(workspace, page, "server")'><i class="fa-solid fa-power-off"></i><span>Contrôles serveur</span></button>
+                <button type="button" class="settings-btn settings-btn-sm" @onclick='() => AddPageBlock(workspace, page, "mail")'><i class="fa-solid fa-envelope"></i><span>Courrier</span></button>
+                <button type="button" class="settings-btn settings-btn-sm" @onclick='() => AddPageBlock(workspace, page, "pins")'><i class="fa-solid fa-scroll"></i><span>Touches</span></button>
+                <button type="button" class="settings-btn settings-btn-sm" @onclick='() => AddPageBlock(workspace, page, "weather")'><i class="fa-solid fa-cloud-sun"></i><span>Météo</span></button>
+                <button type="button" class="settings-btn settings-btn-sm" @onclick='() => AddPageBlock(workspace, page, "worldclock")'><i class="fa-solid fa-earth-americas"></i><span>Heure dans le monde</span></button>
+                <button type="button" class="settings-btn settings-btn-sm" @onclick='() => AddPageBlock(workspace, page, "todo")'><i class="fa-solid fa-list-check"></i><span>Liste de tâches</span></button>
+                <button type="button" class="settings-btn settings-btn-sm" @onclick='() => AddPageBlock(workspace, page, "calendar")'><i class="fa-solid fa-calendar-days"></i><span>Calendrier</span></button>
+            </div>
+            <div class="settings-hint-row"><InfoHint>Ajoute autant de blocs que tu veux, y compris plusieurs du même type (deux boîtes mail différentes l'une sous l'autre, par exemple) : chaque ajout crée un nouveau bloc, à la suite — utilise les flèches pour le repositionner. Chaque bloc « Touches » a ses propres touches : « Ajouter une touche » en crée une nouvelle directement dans ce bloc.</InfoHint></div>
+        }
+    </ChildContent>
+    <Footer>
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="() => _editingPageId = null"><i class="fa-solid fa-check"></i><span>Terminé</span></button>
+    </Footer>
+</Modal>
+
+@code {
+    private static readonly IReadOnlyList<ChoiceItem> PinColumnsChoices =
+        Enumerable.Range(2, 5).Select(n => new ChoiceItem(n.ToString(), n.ToString(), null, "fa-solid fa-grip")).ToList();
+
+    private IReadOnlyList<ChoiceItem> ScriptChoices =>
+        Store.HasServerFolder
+            ? Store.List().Select(s => new ChoiceItem(s.Id, s.Id, s.Folder.Length > 0 ? s.Folder : null, "fa-solid fa-scroll")).ToList()
+            : Array.Empty<ChoiceItem>();
+
+    private IReadOnlyList<ChoiceItem> MailAccountChoices =>
+        new List<ChoiceItem> { new("", "Toutes les boîtes", null, "fa-solid fa-inbox") }
+            .Concat(Config.Current.MailAccounts.Select(a => new ChoiceItem(a.Id, string.IsNullOrWhiteSpace(a.DisplayName) ? a.Username : a.DisplayName, null, "fa-solid fa-envelope")))
+            .ToList();
+
+    /// <summary>v1.34.8 : les listes de la bibliothèque (onglet « Tâches », TodoLists.razor) — un bloc "todo" en choisit une, comme un bloc "mail" choisit une boîte.</summary>
+    /// <summary>v1.37.2, demandé explicitement ("parametré affiché tache du jour, dun jour particulié, lendemain,
+    /// hier, jour en avant") : quel jour un bloc "calendar" affiche — voir <see cref="WidgetPageBlock.CalendarDayMode"/>.</summary>
+    private static readonly IReadOnlyList<ChoiceItem> CalendarDayModeChoices = new List<ChoiceItem>
+    {
+        new("today", "Aujourd'hui", null, "fa-solid fa-calendar-day"),
+        new("offset", "Décalage (hier/demain/dans X jours)", null, "fa-solid fa-calendar-plus"),
+        new("specific", "Jour précis", null, "fa-solid fa-calendar-check")
+    };
+
+    private IReadOnlyList<ChoiceItem> TodoListChoices =>
+        new List<ChoiceItem> { new("", "Aucune liste choisie", null, "fa-solid fa-list-check") }
+            .Concat(Config.Current.TodoLists.Select(l => new ChoiceItem(l.Id, string.IsNullOrWhiteSpace(l.Name) ? "(sans nom)" : l.Name, l.Folder.Length > 0 ? l.Folder : null, "fa-solid fa-list-check")))
+            .ToList();
+
+    // ----- Page de veille (v1.34.5), réglage global — voir Widget.razor pour la logique de bascule. -----
+
+    private void SetIdleEnabled(bool value) => Config.Update(c => c.WidgetIdleEnabled = value);
+
+    private void SetIdleDelay(string value)
+    {
+        if (int.TryParse(value, out var n) && n > 0) Config.Update(c => c.WidgetIdleDelaySeconds = n);
+    }
+
+    private void SetIdleTransition(string value)
+    {
+        if (int.TryParse(value, out var n) && n >= 0) Config.Update(c => c.WidgetIdleTransitionMs = n);
+    }
+
+    private void SetIdleRotateSeconds(string value)
+    {
+        if (int.TryParse(value, out var n) && n > 0) Config.Update(c => c.WidgetIdleRotateSeconds = n);
+    }
+
+    // ----- Onglet affiché dans la config du widget (v1.35) : "pages" (composition habituelle) ou "phone" (modèles
+    // téléphone, voir PhoneTemplatesPanel.razor), demandé explicitement ("un onglet... dans la config du Widget"). -----
+    private string _widgetTab = "pages";
+
+    // ----- Espaces de travail / pages (v1.34.0 : sélection en grille de cartes, comme la bibliothèque de scripts) -----
+
+    /// <summary>Espace affiché (ses pages) — un id plutôt qu'une référence directe : reste valide après un Config.Update, qui remplace toujours Config.Current par une copie.</summary>
+    private string? _selectedWorkspaceId;
+
+    private WidgetWorkspace? SelectedWorkspace =>
+        Config.Current.WidgetWorkspaces.FirstOrDefault(w => w.Id == _selectedWorkspaceId)
+        ?? Config.Current.WidgetWorkspaces.FirstOrDefault();
+
+    /// <summary>Page ouverte dans la fenêtre « Modifier » (id, même raison que ci-dessus) — null = fenêtre fermée.</summary>
+    private string? _editingPageId;
+
+    private WidgetPageEntry? EditingPage => SelectedWorkspace?.Pages.FirstOrDefault(p => p.Id == _editingPageId);
+
+    private void OpenPageEditor(WidgetPageEntry page) => _editingPageId = page.Id;
+
+    private static string DefaultPageName(int index) => $"Page {index + 1}";
+
+    private static string TypeLabel(string type) => type switch
+    {
+        "clock" => "Horloge",
+        "server" => "Contrôles serveur",
+        "mail" => "Courrier",
+        "pins" => "Touches",
+        "weather" => "Météo",
+        "worldclock" => "Heure dans le monde",
+        "todo" => "Liste de tâches",
+        "calendar" => "Calendrier",
+        _ => "?"
+    };
+
+    private static string BlockIcon(string type) => type switch
+    {
+        "clock" => "fa-solid fa-clock",
+        "server" => "fa-solid fa-power-off",
+        "mail" => "fa-solid fa-envelope",
+        "pins" => "fa-solid fa-grip",
+        "weather" => "fa-solid fa-cloud-sun",
+        "worldclock" => "fa-solid fa-earth-americas",
+        "todo" => "fa-solid fa-list-check",
+        "calendar" => "fa-solid fa-calendar-days",
+        _ => "fa-solid fa-question"
+    };
+
+    private string MailBlockTitle(WidgetPageBlock block)
+    {
+        if (string.IsNullOrEmpty(block.MailAccountId)) return "Courrier (toutes les boîtes)";
+        var acc = Config.Current.MailAccounts.FirstOrDefault(a => a.Id == block.MailAccountId);
+        return acc is null ? "Courrier (toutes les boîtes)" : $"Courrier ({(string.IsNullOrWhiteSpace(acc.DisplayName) ? acc.Username : acc.DisplayName)})";
+    }
+
+    private string BlockTitle(WidgetPageBlock block) => block.Type switch
+    {
+        "mail" => MailBlockTitle(block),
+        "weather" => string.IsNullOrWhiteSpace(block.WeatherLocationName) ? "Météo (région à choisir)" : $"Météo ({block.WeatherLocationName})",
+        "worldclock" => string.IsNullOrWhiteSpace(block.WorldClockLabel) ? "Heure dans le monde (à configurer)" : $"Heure dans le monde ({block.WorldClockLabel})",
+        "todo" => TodoBlockTitle(block),
+        _ => TypeLabel(block.Type)
+    };
+
+    /// <summary>
+    /// v1.34.8 : le bloc ne fait plus que choisir une liste de la bibliothèque (voir <see cref="TodoListChoices"/>) —
+    /// les tâches elles-mêmes vivent dans TodoLists.razor (onglet « Tâches »), plus dans le bloc.
+    /// </summary>
+    private string TodoBlockTitle(WidgetPageBlock block)
+    {
+        var list = Config.Current.TodoLists.FirstOrDefault(l => l.Id == block.TodoListId);
+        if (list is null) return "Liste de tâches (à choisir)";
+        return list.Items.Count == 0 ? $"{list.Name} (vide)" : $"{list.Name} ({list.Items.Count(t => !t.Done)}/{list.Items.Count})";
+    }
+
+    /// <summary>Résumé du contenu d'une page pour ses badges dans la grille (regroupe les blocs du même type : « Courrier ×2 »).</summary>
+    private static IEnumerable<string> PageBlockSummaries(WidgetPageEntry page) =>
+        page.Blocks.GroupBy(b => b.Type).Select(g => g.Count() > 1 ? $"{TypeLabel(g.Key)} ×{g.Count()}" : TypeLabel(g.Key));
+
+    private void AddWorkspace()
+    {
+        var ws = new WidgetWorkspace { Name = $"Espace {Config.Current.WidgetWorkspaces.Count + 1}" };
+        Config.Update(c => c.WidgetWorkspaces.Add(ws));
+        _selectedWorkspaceId = ws.Id;
+    }
+
+    private void RemoveWorkspace(WidgetWorkspace workspace)
+    {
+        Config.Update(c =>
+        {
+            if (c.WidgetWorkspaces.Count <= 1) return; // toujours au moins un espace
+            c.WidgetWorkspaces.RemoveAll(w => w.Id == workspace.Id);
+            // v1.34.11 : plus besoin de gérer ici le report de "l'espace affiché" — le filet de sécurité générique
+            // dans BuilderConfigService.Update (ActiveWidgetWorkspaceId pointant toujours vers un espace existant)
+            // s'en charge pour toute suppression.
+        });
+        if (_selectedWorkspaceId == workspace.Id) _selectedWorkspaceId = null;
+    }
+
+    private void RenameWorkspace(WidgetWorkspace workspace, string name) =>
+        Config.Update(c => { var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id); if (w is not null) w.Name = string.IsNullOrWhiteSpace(name) ? "Espace" : name; });
+
+    /// <summary>v1.34.12 : choix MULTIPLE — plusieurs espaces peuvent être actifs à la fois (voir WidgetWorkspace.Active).
+    /// Le filet de sécurité générique dans BuilderConfigService.Update garantit qu'au moins un le reste toujours, et
+    /// que l'espace AFFICHÉ (ActiveWidgetWorkspaceId, choisi séparément via le sélecteur du widget) en fait partie.</summary>
+    private void SetWorkspaceActive(WidgetWorkspace workspace, bool value) =>
+        Config.Update(c => { var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id); if (w is not null) w.Active = value; });
+
+    private void AddWorkspacePage(WidgetWorkspace workspace) =>
+        Config.Update(c => { var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id); w?.Pages.Add(new WidgetPageEntry()); });
+
+    /// <summary>Participation d'une page à la veille (v1.34.6) — voir WidgetPageEntry.ShowInIdle/IdleOnly.</summary>
+    private void SetPageIdleFlags(WidgetWorkspace workspace, WidgetPageEntry page, bool showInIdle, bool idleOnly) =>
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            var p = w?.Pages.FirstOrDefault(x => x.Id == page.Id);
+            if (p is null) return;
+            p.ShowInIdle = showInIdle;
+            p.IdleOnly = showInIdle && idleOnly; // "uniquement en veille" n'a pas de sens si la page n'est même pas en veille
+        });
+
+    private void RenamePage(WidgetWorkspace workspace, WidgetPageEntry page, string name) =>
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            var p = w?.Pages.FirstOrDefault(x => x.Id == page.Id);
+            if (p is not null) p.Name = name.Trim();
+        });
+
+    private void RemoveWorkspacePage(WidgetWorkspace workspace, WidgetPageEntry page)
+    {
+        // Les touches de chaque bloc "pins" de cette page n'appartiennent qu'à elle (v1.34.1) : les retirer du
+        // catalogue global avec la page, plutôt que de les laisser orphelines.
+        var pinIds = page.Blocks.Where(b => b.Type == "pins").SelectMany(b => b.PinIds).ToList();
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            w?.Pages.RemoveAll(p => p.Id == page.Id);
+            if (pinIds.Count > 0) c.WidgetPins.RemoveAll(p => pinIds.Contains(p.Id));
+        });
+        if (_editingPageId == page.Id) _editingPageId = null;
+    }
+
+    private void MoveWorkspacePage(WidgetWorkspace workspace, int index, int delta)
+    {
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            if (w is null) return;
+            var newIndex = index + delta;
+            if (newIndex < 0 || newIndex >= w.Pages.Count) return;
+            (w.Pages[index], w.Pages[newIndex]) = (w.Pages[newIndex], w.Pages[index]);
+        });
+    }
+
+    // ----- Glisser-déposer des pages (v1.34.3) : réordonner dans le même espace, ou déposer sur un autre espace (sa
+    // puce, en haut) pour l'y déplacer — même mécanisme que les scripts/dossiers de la bibliothèque (sdbDragCard.js,
+    // la carte suit le curseur), pas de nouveau système. Les flèches Monter/Descendre restent en secours (renommées
+    // Avant/Après, la grille de pages n'étant pas verticale) pour rester utilisable sans souris précise/tactile. -----
+
+    private string? _draggingPageId;
+    private string? _draggingPageWorkspaceId;
+    private int? _dragOverPageIndex;
+    private string? _dragOverWorkspaceId;
+
+    private bool IsDraggingPage => _draggingPageId is not null;
+
+    private static string PageElementId(string pageId) => "widget-page-" + pageId.Replace(" ", "_");
+
+    private string PageCardClass(WidgetPageEntry page, int index)
+    {
+        var css = "lib-card";
+        if (_draggingPageId == page.Id) css += " is-dragging";
+        else if (IsDraggingPage && _dragOverPageIndex == index) css += " is-dragover";
+        return css;
+    }
+
+    private string WorkspaceChipClass(WidgetWorkspace ws)
+    {
+        var css = SelectedWorkspace?.Id == ws.Id ? "lib-workspace is-on" : "lib-workspace";
+        if (_dragOverWorkspaceId == ws.Id) css += " is-dragover";
+        return css;
+    }
+
+    private async Task OnDragStartPage(Microsoft.AspNetCore.Components.Web.MouseEventArgs e, WidgetWorkspace workspace, WidgetPageEntry page)
+    {
+        _draggingPageId = page.Id;
+        _draggingPageWorkspaceId = workspace.Id;
+        _dragOverPageIndex = null;
+        _dragOverWorkspaceId = null;
+        await JS.InvokeVoidAsync("sdbDragCard.start", PageElementId(page.Id), e.ClientX, e.ClientY);
+    }
+
+    private void HoverPageIndex(int index)
+    {
+        if (IsDraggingPage) _dragOverPageIndex = index;
+    }
+
+    private void UnhoverPageIndex()
+    {
+        if (IsDraggingPage) _dragOverPageIndex = null;
+    }
+
+    private void HoverWorkspaceForDrop(string workspaceId)
+    {
+        if (IsDraggingPage && workspaceId != _draggingPageWorkspaceId) _dragOverWorkspaceId = workspaceId;
+    }
+
+    private void UnhoverWorkspaceForDrop() => _dragOverWorkspaceId = null;
+
+    /// <summary>Relâché n'importe où sans passer par une zone de dépose valide : annule proprement.</summary>
+    private async Task CancelPageDrag()
+    {
+        var elId = _draggingPageId is not null ? PageElementId(_draggingPageId) : null;
+        _draggingPageId = null;
+        _draggingPageWorkspaceId = null;
+        _dragOverPageIndex = null;
+        _dragOverWorkspaceId = null;
+        await JS.InvokeVoidAsync("sdbDragCard.stop", elId);
+    }
+
+    private async Task DropOnPageIndex(WidgetWorkspace workspace, int targetIndex)
+    {
+        if (_draggingPageId is null || _draggingPageWorkspaceId != workspace.Id) { await CancelPageDrag(); return; }
+
+        var draggedId = _draggingPageId;
+        var elId = PageElementId(draggedId);
+        _draggingPageId = null;
+        _draggingPageWorkspaceId = null;
+        _dragOverPageIndex = null;
+        _dragOverWorkspaceId = null;
+        await JS.InvokeVoidAsync("sdbDragCard.stop", elId);
+
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            if (w is null) return;
+            var fromIndex = w.Pages.FindIndex(p => p.Id == draggedId);
+            if (fromIndex < 0) return;
+            var page = w.Pages[fromIndex];
+            w.Pages.RemoveAt(fromIndex);
+            // La position visée venait de la liste AVANT retrait : si l'élément tenu était avant elle, tout ce qui
+            // suit vient de décaler d'un cran une fois retiré — même ajustement que DropAtIndex dans Library.razor.
+            var insertAt = fromIndex < targetIndex ? targetIndex - 1 : targetIndex;
+            insertAt = Math.Clamp(insertAt, 0, w.Pages.Count);
+            w.Pages.Insert(insertAt, page);
+        });
+    }
+
+    private async Task DropPageOnWorkspace(WidgetWorkspace targetWorkspace)
+    {
+        if (_draggingPageId is null || _draggingPageWorkspaceId is null || _draggingPageWorkspaceId == targetWorkspace.Id)
+        {
+            await CancelPageDrag();
+            return;
+        }
+
+        var draggedId = _draggingPageId;
+        var sourceWorkspaceId = _draggingPageWorkspaceId;
+        var elId = PageElementId(draggedId);
+        _draggingPageId = null;
+        _draggingPageWorkspaceId = null;
+        _dragOverPageIndex = null;
+        _dragOverWorkspaceId = null;
+        await JS.InvokeVoidAsync("sdbDragCard.stop", elId);
+
+        Config.Update(c =>
+        {
+            var source = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == sourceWorkspaceId);
+            var target = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == targetWorkspace.Id);
+            if (source is null || target is null) return;
+            var idx = source.Pages.FindIndex(p => p.Id == draggedId);
+            if (idx < 0) return;
+            var page = source.Pages[idx];
+            source.Pages.RemoveAt(idx);
+            target.Pages.Add(page);
+        });
+
+        // Suit la page vers son nouvel espace plutôt que de rester affiché sur celui qui vient de la perdre.
+        _selectedWorkspaceId = targetWorkspace.Id;
+    }
+
+    // ----- Blocs d'une page (v1.34.0) : toujours ajoutables, même type déjà présent ou non — voir WidgetPageBlock. -----
+
+    private void AddPageBlock(WidgetWorkspace workspace, WidgetPageEntry page, string type) =>
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            var p = w?.Pages.FirstOrDefault(x => x.Id == page.Id);
+            p?.Blocks.Add(new WidgetPageBlock { Type = type });
+        });
+
+    private void RemovePageBlock(WidgetWorkspace workspace, WidgetPageEntry page, WidgetPageBlock block)
+    {
+        // Un bloc "pins" retiré emporte ses propres touches (v1.34.1 : plus de catalogue global partagé).
+        var pinIds = block.Type == "pins" ? new List<string>(block.PinIds) : new List<string>();
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            var p = w?.Pages.FirstOrDefault(x => x.Id == page.Id);
+            p?.Blocks.RemoveAll(b => b.Id == block.Id);
+            if (pinIds.Count > 0) c.WidgetPins.RemoveAll(x => pinIds.Contains(x.Id));
+        });
+    }
+
+    private void MoveBlock(WidgetWorkspace workspace, WidgetPageEntry page, int index, int delta) =>
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            var p = w?.Pages.FirstOrDefault(x => x.Id == page.Id);
+            if (p is null) return;
+            var newIndex = index + delta;
+            if (newIndex < 0 || newIndex >= p.Blocks.Count) return;
+            (p.Blocks[index], p.Blocks[newIndex]) = (p.Blocks[newIndex], p.Blocks[index]);
+        });
+
+    private void SetBlockField(WidgetWorkspace workspace, WidgetPageEntry page, WidgetPageBlock block, Action<WidgetPageBlock> apply) =>
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            var p = w?.Pages.FirstOrDefault(x => x.Id == page.Id);
+            var b = p?.Blocks.FirstOrDefault(x => x.Id == block.Id);
+            if (b is not null) apply(b);
+        });
+
+    private void SetBlockMailAccount(WidgetWorkspace workspace, WidgetPageEntry page, WidgetPageBlock block, string accountId) =>
+        SetBlockField(workspace, page, block, b => b.MailAccountId = string.IsNullOrEmpty(accountId) ? null : accountId);
+
+    private void SetBlockPinColumns(WidgetWorkspace workspace, WidgetPageEntry page, WidgetPageBlock block, string value)
+    {
+        if (int.TryParse(value, out var n)) SetBlockField(workspace, page, block, b => b.PinColumns = n);
+    }
+
+    // ----- Bloc "todo" (v1.34.6, devenu un simple choix de liste en v1.34.8) : les tâches elles-mêmes vivent
+    // maintenant dans la bibliothèque (Config.Current.TodoLists, onglet « Tâches », TodoLists.razor) ; le bloc ne
+    // fait plus que pointer vers une liste par son id — comme un bloc "mail" pointe vers une boîte. -----
+
+    private void SetBlockTodoList(WidgetWorkspace workspace, WidgetPageEntry page, WidgetPageBlock block, string listId) =>
+        SetBlockField(workspace, page, block, b => b.TodoListId = string.IsNullOrEmpty(listId) ? null : listId);
+
+    /// <summary>
+    /// v1.34.15, demandé explicitement : tâches de la liste choisie pour ce bloc qui ont été retirées rapidement
+    /// depuis le widget (<see cref="TodoItem.Hidden"/>, voir Widget.razor/HideTodo) — listées ici pour pouvoir les
+    /// réactiver, puisque ça ne les supprime pas.
+    /// </summary>
+    private List<TodoItem>? HiddenTodosOf(WidgetPageBlock block) =>
+        Config.Current.TodoLists.FirstOrDefault(l => l.Id == block.TodoListId)?.Items.Where(t => t.Hidden).ToList();
+
+    private void ShowTodo(WidgetPageBlock block, TodoItem hidden) =>
+        Config.Update(c =>
+        {
+            var t = c.TodoLists.FirstOrDefault(l => l.Id == block.TodoListId)?.Items.FirstOrDefault(x => x.Id == hidden.Id);
+            if (t is not null) t.Hidden = false;
+        });
+
+    // ----- Bloc "weather" (v1.34.5) : recherche de région via Open-Meteo (WeatherService), résultats affichés sous
+    // le champ de recherche — pas de ChoiceField ici, la liste vient d'un appel réseau à chaque frappe, pas d'un
+    // catalogue fixe. -----
+
+    private readonly Dictionary<string, string> _weatherQuery = new();
+    private readonly Dictionary<string, List<WeatherLocationResult>> _weatherResults = new();
+
+    private string GetWeatherQuery(WidgetPageBlock block) => _weatherQuery.TryGetValue(block.Id, out var q) ? q : block.WeatherLocationName;
+
+    private async Task OnWeatherQueryChanged(WidgetPageBlock block, string value)
+    {
+        _weatherQuery[block.Id] = value;
+        _weatherResults[block.Id] = value.Trim().Length >= 2 ? await Weather.SearchLocationsAsync(value) : new();
+    }
+
+    private void PickWeatherLocation(WidgetWorkspace workspace, WidgetPageEntry page, WidgetPageBlock block, WeatherLocationResult loc)
+    {
+        SetBlockField(workspace, page, block, b =>
+        {
+            b.WeatherLocationName = loc.DisplayName;
+            b.WeatherLat = loc.Latitude;
+            b.WeatherLon = loc.Longitude;
+        });
+        _weatherQuery[block.Id] = loc.DisplayName;
+        _weatherResults[block.Id] = new();
+    }
+
+    // ----- Bloc "worldclock" (v1.34.5) : liste des fuseaux connus de la machine, avec recherche par pays (v1.34.6).
+    // Partagée (StreamDeck.Shared.Services.TimeZoneChoices) avec l'appli (bouton "Affichage plein écran",
+    // InfoKind.WorldClock) pour ne pas dupliquer la table de pays. -----
+
+    private IReadOnlyList<ChoiceItem> TimeZoneChoices => StreamDeck.Services.TimeZoneChoices.All;
+
+    private void SetWorldClockTimeZone(WidgetWorkspace workspace, WidgetPageEntry page, WidgetPageBlock block, string tzId) =>
+        SetBlockField(workspace, page, block, b => b.WorldClockTimeZoneId = tzId);
+
+    // ----- Touches d'un bloc "pins" (v1.34.1) : plus de catalogue global séparé — chaque bloc crée/modifie/retire les siennes. -----
+
+    /// <summary>Touches de ce bloc précis, dans l'ordre choisi — une touche retirée ailleurs (ne devrait plus arriver) disparaît simplement.</summary>
+    private List<WidgetPin> PinsInBlock(WidgetPageBlock block) =>
+        block.PinIds
+            .Select(id => Config.Current.WidgetPins.FirstOrDefault(p => p.Id == id))
+            .Where(p => p is not null)
+            .Select(p => p!)
+            .ToList();
+
+    private void AddPinToBlock(WidgetWorkspace workspace, WidgetPageEntry page, WidgetPageBlock block)
+    {
+        var pin = new WidgetPin();
+        Config.Update(c =>
+        {
+            c.WidgetPins.Add(pin);
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            var p = w?.Pages.FirstOrDefault(x => x.Id == page.Id);
+            var b = p?.Blocks.FirstOrDefault(x => x.Id == block.Id);
+            b?.PinIds.Add(pin.Id);
+        });
+    }
+
+    private void RemovePinFromBlock(WidgetWorkspace workspace, WidgetPageEntry page, WidgetPageBlock block, WidgetPin pin) =>
+        Config.Update(c =>
+        {
+            var w = c.WidgetWorkspaces.FirstOrDefault(x => x.Id == workspace.Id);
+            var p = w?.Pages.FirstOrDefault(x => x.Id == page.Id);
+            var b = p?.Blocks.FirstOrDefault(x => x.Id == block.Id);
+            b?.PinIds.Remove(pin.Id);
+            c.WidgetPins.RemoveAll(x => x.Id == pin.Id);
+        });
+
+    private void SetPinScript(WidgetPin pin, string value) => Config.Update(c => { var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id); if (p is not null) p.ScriptName = value; });
+
+    private string? _pinImageError;
+    private string? _pinImageErrorFor;
+
+    private void SetPinImage(WidgetPin pin, string? value)
+    {
+        _pinImageError = null;
+        Config.Update(c => { var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id); if (p is not null) p.ImageUrl = value ?? ""; });
+    }
+
+    private void SetPinImageOnly(WidgetPin pin, bool value) =>
+        Config.Update(c => { var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id); if (p is not null) p.ImageOnly = value; });
+
+    private async Task PickPinImage(WidgetPin pin)
+    {
+        _pinImageError = null;
+        _pinImageErrorFor = pin.Id;
+
+        try
+        {
+            var path = await Picker.PickFileAsync(new[] { ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp" });
+            if (string.IsNullOrWhiteSpace(path)) return;
+
+            if (!File.Exists(path)) { _pinImageError = "Fichier introuvable."; return; }
+
+            SetPinImage(pin, new Uri(path).AbsoluteUri);
+        }
+        catch (Exception ex)
+        {
+            _pinImageError = $"Impossible de référencer cette image : {ex.Message}";
+        }
+    }
+
+    private WidgetPin? _editingPin;
+
+    private void OpenPinAppearance(WidgetPin pin) => _editingPin = pin;
+
+    private void ApplyPinAppearance((string Icon, string Color) v)
+    {
+        var pin = _editingPin;
+        if (pin is null) return;
+
+        Config.Update(c =>
+        {
+            var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id);
+            if (p is null) return;
+            p.Icon = string.IsNullOrWhiteSpace(v.Icon) ? "fa-solid fa-bolt" : v.Icon;
+            p.Color = string.IsNullOrWhiteSpace(v.Color) ? "#3b82f6" : v.Color;
+        });
+
+        _editingPin = Config.Current.WidgetPins.FirstOrDefault(x => x.Id == pin.Id);
+    }
+
+    // ----- Choix multiple d'une touche (v1.35, "on doit pouvoir avoir les choix multiple sur le widget") : même
+    // modèle que ChoiceOption côté téléphone, mais limité ici à des choix de type Script (exécution locale, voir
+    // WidgetPin.Options / Widget.razor). -----
+
+    // v1.36, "possibilité de créer des timer... et donc sur pc aussi" : "timer" ajouté à "script"/"picker".
+    private static readonly IReadOnlyList<ChoiceItem> PinKindChoices = new List<ChoiceItem>
+    {
+        new("script", "Lance le script", "Lance directement le script choisi", "fa-solid fa-scroll"),
+        new("picker", "Choix multiple", "Ouvre un popup proposant plusieurs scripts", "fa-solid fa-list-ul"),
+        new("timer", "Minuteur / chronomètre", "Compte à rebours ou chrono façon Pomodoro", "fa-solid fa-stopwatch")
+    };
+
+    private void SetPinKind(WidgetPin pin, string kind) =>
+        Config.Update(c =>
+        {
+            var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id);
+            if (p is null) return;
+            p.Kind = kind;
+            if (kind == "picker" && p.Options.Count == 0) p.Options.Add(new ChoiceOption { Label = "Choix 1" });
+        });
+
+    /// <summary>Le minuteur (pin.Timer/pin.AttachedTimer) est muté directement par TimerConfigEditor — cette
+    /// méthode se contente de déclencher la sauvegarde/notification (voir BuilderConfigService.Update, qui clone
+    /// désormais Timer/AttachedTimer à partir de la config courante déjà modifiée).</summary>
+    private void SaveTimerChange() => Config.Update(_ => { });
+
+    private void SetPinAttachedTimerEnabled(WidgetPin pin, bool enabled) =>
+        Config.Update(c =>
+        {
+            var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id);
+            if (p is null) return;
+            p.AttachedTimer = enabled ? new TimerConfig() : null;
+        });
+
+    private DeckButton OptionPreviewButton(ChoiceOption opt) => new()
+    {
+        Label = opt.Label,
+        Icon = string.IsNullOrWhiteSpace(opt.Icon) ? "fa-solid fa-bolt" : opt.Icon,
+        ImageUrl = PinImageResolver.Resolve(opt.ImageUrl),
+        Color = string.IsNullOrWhiteSpace(opt.Color) ? "#3b82f6" : opt.Color,
+        Enabled = true
+    };
+
+    private void AddOption(WidgetPin pin) =>
+        Config.Update(c =>
+        {
+            var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id);
+            p?.Options.Add(new ChoiceOption { Label = $"Choix {p.Options.Count + 1}" });
+        });
+
+    private void RemoveOption(WidgetPin pin, ChoiceOption option) =>
+        Config.Update(c =>
+        {
+            var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id);
+            p?.Options.RemoveAll(o => o.Id == option.Id);
+        });
+
+    private void SetOptionLabel(WidgetPin pin, ChoiceOption option, string value) =>
+        Config.Update(c =>
+        {
+            var o = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id)?.Options.FirstOrDefault(x => x.Id == option.Id);
+            if (o is not null) o.Label = string.IsNullOrWhiteSpace(value) ? o.Label : value.Trim();
+        });
+
+    private void SetOptionScript(WidgetPin pin, ChoiceOption option, string value) =>
+        Config.Update(c =>
+        {
+            var o = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id)?.Options.FirstOrDefault(x => x.Id == option.Id);
+            if (o is not null) { o.Type = StepType.Script; o.Script = value; }
+        });
+
+    private ChoiceOption? _editingOption;
+
+    private void OpenOptionAppearance(ChoiceOption option) => _editingOption = option;
+
+    private void ApplyOptionAppearance((string Icon, string Color) v)
+    {
+        var option = _editingOption;
+        if (option is null) return;
+
+        Config.Update(c =>
+        {
+            foreach (var pin in c.WidgetPins)
+            {
+                var o = pin.Options.FirstOrDefault(x => x.Id == option.Id);
+                if (o is null) continue;
+                o.Icon = string.IsNullOrWhiteSpace(v.Icon) ? "fa-solid fa-bolt" : v.Icon;
+                o.Color = string.IsNullOrWhiteSpace(v.Color) ? "#3b82f6" : v.Color;
+                break;
+            }
+        });
+
+        _editingOption = Config.Current.WidgetPins.SelectMany(p => p.Options).FirstOrDefault(x => x.Id == option.Id);
+    }
+
+    // ----- Déclencheur(s) vocal d'une touche (v1.35, "autorisation de trigger ces bouton par la voix depuis le pc") -----
+
+    private static string VoiceTriggersText(WidgetPin pin) => string.Join(", ", pin.VoiceTriggers);
+
+    private void SetPinVoiceTriggers(WidgetPin pin, string value) =>
+        Config.Update(c =>
+        {
+            var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id);
+            if (p is null) return;
+            p.VoiceTriggers = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        });
+
+    private void SetPinVoiceWake(WidgetPin pin, bool value) =>
+        Config.Update(c => { var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id); if (p is not null) p.VoiceRequiresWakeWord = value; });
+
+    private string? _recordingPinId;
+
+    private async Task RecordPinTrigger(WidgetPin pin)
+    {
+        if (!Speech.Available || _recordingPinId is not null) return;
+
+        _recordingPinId = pin.Id;
+        StateHasChanged();
+
+        try
+        {
+            var text = await Speech.RecognizeOnceAsync();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                var current = Config.Current.WidgetPins.FirstOrDefault(x => x.Id == pin.Id);
+                var triggers = current is null ? new List<string>() : new List<string>(current.VoiceTriggers);
+                if (!triggers.Any(t => t.Equals(text, StringComparison.OrdinalIgnoreCase))) triggers.Add(text.Trim());
+                Config.Update(c => { var p = c.WidgetPins.FirstOrDefault(x => x.Id == pin.Id); if (p is not null) p.VoiceTriggers = triggers; });
+            }
+        }
+        finally
+        {
+            _recordingPinId = null;
+        }
+    }
+
+    // ----- Réglages globaux de l'écoute vocale continue du widget (v1.35, voir BuilderConfig.WidgetVoice) -----
+
+    private void SetVoiceEnabled(bool value) => Config.Update(c => c.WidgetVoice.Enabled = value);
+
+    private void SetVoiceWakeWord(string value) =>
+        Config.Update(c => c.WidgetVoice.WakeWord = string.IsNullOrWhiteSpace(value) ? c.WidgetVoice.WakeWord : value.Trim());
+
+    private void SetVoiceAwakeSeconds(string value)
+    {
+        if (int.TryParse(value, out var n) && n > 0) Config.Update(c => c.WidgetVoice.AwakeSeconds = n);
+    }
+}

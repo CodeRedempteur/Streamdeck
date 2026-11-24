@@ -1,0 +1,114 @@
+@* v1.38 — Dessin d'une roue WheelConvert (même géométrie que la roue WPF : secteurs à partir du haut, sens horaire,
+   moyeu au centre). SVG pur + foreignObject pour les icônes Font Awesome / emoji ; cliquable par secteur. *@
+@using System.Globalization
+
+<svg viewBox="0 0 300 300" width="@Size" height="@Size" class="wcp" style="@(Dimmed ? "opacity:.55" : "")" role="img" aria-label="@Title">
+    <circle cx="150" cy="150" r="146" fill="rgba(0,0,0,.25)" />
+
+    @if (Items.Count == 0)
+    {
+        <path d="@Ring()" fill="#1c1c22" stroke="rgba(255,255,255,.18)" fill-rule="evenodd" />
+    }
+    else
+    {
+        double span = 360.0 / Items.Count;
+        double gap = Items.Count == 1 ? 0 : 1.2;
+        for (int i = 0; i < Items.Count; i++)
+        {
+            var item = Items[i];
+            int index = i;
+            double mid = i * span;
+            bool on = index == Highlight;
+            string d = Items.Count == 1 ? Ring() : Sector(mid - span / 2 + gap, mid + span / 2 - gap);
+
+            <path d="@d" fill="@(on ? item.Color : "#1c1c22")" fill-rule="evenodd"
+                  stroke="@(on ? item.Color : "rgba(255,255,255,.18)")" stroke-width="1"
+                  class="wcp-sector @(OnSectorClick.HasDelegate ? "is-click" : "")"
+                  style="--accent:@item.Color"
+                  @onclick="() => OnSectorClick.InvokeAsync(index)" />
+
+            var (cx, cy) = Polar(mid, (RInner + ROuter) / 2);
+            double w = Items.Count <= 4 ? 92 : Items.Count <= 8 ? 70 : 54;
+            <foreignObject x="@N(cx - w / 2)" y="@N(cy - 30)" width="@N(w)" height="60" pointer-events="none">
+                <div xmlns="http://www.w3.org/1999/xhtml" class="wcp-cell">
+                    @if (!string.IsNullOrWhiteSpace(item.Glyph))
+                    {
+                        <span class="wcp-glyph" style="font-size:@(Items.Count <= 8 ? 20 : 15)px">@item.Glyph</span>
+                    }
+                    else
+                    {
+                        <i class="@(string.IsNullOrWhiteSpace(item.Icon) ? "fa-solid fa-scroll" : item.Icon)" style="font-size:@(Items.Count <= 8 ? 18 : 13)px"></i>
+                    }
+                    @if (ShowLabels)
+                    {
+                        <span class="wcp-label" style="font-size:@(Items.Count <= 8 ? 11 : 9)px">@item.Label</span>
+                        @if (item.IsLink)
+                        {
+                            <span class="wcp-sub">roue ›</span>
+                        }
+                    }
+                </div>
+            </foreignObject>
+        }
+    }
+
+    <circle cx="150" cy="150" r="@N(RInner - 5)" fill="#121216" stroke="rgba(255,255,255,.18)" />
+    <foreignObject x="@N(150 - RInner + 8)" y="@N(150 - 30)" width="@N((RInner - 8) * 2)" height="60" pointer-events="none">
+        <div xmlns="http://www.w3.org/1999/xhtml" class="wcp-hub">
+            @if (!string.IsNullOrWhiteSpace(HubGlyph))
+            {
+                <span class="wcp-glyph" style="font-size:16px">@HubGlyph</span>
+            }
+            else if (!string.IsNullOrWhiteSpace(HubIcon))
+            {
+                <i class="@HubIcon" style="font-size:15px;color:@HubColor"></i>
+            }
+            @if (ShowLabels)
+            {
+                <span class="wcp-hub-title">@Title</span>
+            }
+        </div>
+    </foreignObject>
+</svg>
+
+@code {
+    public sealed record Item(string Label, string? Icon, string? Glyph, string Color, bool IsLink = false);
+
+    private const double C = 150, RInner = 52, ROuter = 140;
+
+    [Parameter] public IReadOnlyList<Item> Items { get; set; } = Array.Empty<Item>();
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string? HubIcon { get; set; }
+    [Parameter] public string? HubGlyph { get; set; }
+    [Parameter] public string HubColor { get; set; } = "#fff";
+    [Parameter] public int Highlight { get; set; } = -1;
+    [Parameter] public int Size { get; set; } = 320;
+    [Parameter] public bool ShowLabels { get; set; } = true;
+    [Parameter] public bool Dimmed { get; set; }
+    [Parameter] public EventCallback<int> OnSectorClick { get; set; }
+
+    // Coordonnées SVG : toujours avec un point décimal (la culture française mettrait une virgule)
+    private static string N(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static (double X, double Y) Polar(double deg, double r)
+    {
+        double rad = deg * Math.PI / 180;
+        return (C + r * Math.Sin(rad), C - r * Math.Cos(rad));
+    }
+
+    private static string Sector(double a0, double a1)
+    {
+        int large = a1 - a0 > 180 ? 1 : 0;
+        var (x0, y0) = Polar(a0, ROuter);
+        var (x1, y1) = Polar(a1, ROuter);
+        var (x2, y2) = Polar(a1, RInner);
+        var (x3, y3) = Polar(a0, RInner);
+        return $"M{N(x0)} {N(y0)} A{N(ROuter)} {N(ROuter)} 0 {large} 1 {N(x1)} {N(y1)} " +
+               $"L{N(x2)} {N(y2)} A{N(RInner)} {N(RInner)} 0 {large} 0 {N(x3)} {N(y3)} Z";
+    }
+
+    /// Anneau complet (roue vide ou à un seul secteur) : deux cercles, remplissage pair-impair.
+    private static string Ring() =>
+        $"M{N(C - ROuter)} {N(C)} a{N(ROuter)} {N(ROuter)} 0 1 0 {N(ROuter * 2)} 0 a{N(ROuter)} {N(ROuter)} 0 1 0 {N(-ROuter * 2)} 0 Z " +
+        $"M{N(C - RInner)} {N(C)} a{N(RInner)} {N(RInner)} 0 1 0 {N(RInner * 2)} 0 a{N(RInner)} {N(RInner)} 0 1 0 {N(-RInner * 2)} 0 Z";
+}

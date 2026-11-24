@@ -1,0 +1,87 @@
+@* Popup de personnalisation visuelle d'un script ou d'un dossier : icône + couleur. *@
+
+<Modal Open="Open" Title="@("Personnaliser « " + Title + " »")" Icon="fa-solid fa-palette" Size="narrow" OnClose="Close" Elevated="true">
+    <ChildContent>
+        <p class="settings-label" style="margin-bottom:6px">Couleur</p>
+        <div class="settings-colors">
+            <button type="button" class="@SwatchClass("")" style="background:var(--surface-3, #2a2f3a)" @onclick='() => SetColor("")' title="Par défaut" aria-label="Couleur par défaut">
+                <i class="fa-solid fa-ban"></i>
+            </button>
+            @foreach (var c in Palette)
+            {
+                <button type="button" class="@SwatchClass(c)" style="background:@(c)" @onclick="() => SetColor(c)" aria-label="@c" title="@c"></button>
+            }
+            <label class="settings-swatch settings-swatch-custom" title="Couleur personnalisée">
+                <i class="fa-solid fa-eye-dropper"></i>
+                <input type="color" value="@(string.IsNullOrEmpty(_color) ? "#3b82f6" : _color)" @oninput="e => SetColor((string?)e.Value ?? string.Empty)" />
+            </label>
+        </div>
+
+        <p class="settings-label" style="margin:16px 0 6px">Icône</p>
+        <div class="apop-icons">
+            <button type="button" class="@IconClass("")" @onclick='() => SetIcon("")' title="Icône automatique (selon le contenu)">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+            </button>
+            @foreach (var icon in Icons)
+            {
+                <button type="button" class="@IconClass(icon)" @onclick="() => SetIcon(icon)" title="@icon">
+                    <i class="@icon"></i>
+                </button>
+            }
+        </div>
+    </ChildContent>
+</Modal>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string Icon { get; set; } = "";
+    [Parameter] public string Color { get; set; } = "";
+    [Parameter] public EventCallback<(string Icon, string Color)> OnApply { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string _icon = "";
+    private string _color = "";
+    private bool _loaded;
+
+    protected override void OnParametersSet()
+    {
+        // Ne recharge l'état local qu'à l'ouverture : sinon, chaque clic (qui change Icon/Color via OnApply) écraserait le choix en cours.
+        if (Open && !_loaded) { _icon = Icon; _color = Color; _loaded = true; }
+        if (!Open) _loaded = false;
+    }
+
+    private static readonly string[] Palette =
+    {
+        "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+        "#ec4899", "#14b8a6", "#64748b", "#f97316", "#0ea5e9"
+    };
+
+    // Palette élargie (v1.34.6, sur demande) — toujours des icônes "fa-solid" déjà chargées avec Font Awesome
+    // (StreamDeck.Shared/wwwroot/lib/fontawesome), aucun fichier supplémentaire à charger.
+    private static readonly string[] Icons =
+    {
+        "fa-solid fa-rocket", "fa-solid fa-star", "fa-solid fa-fire", "fa-solid fa-bolt", "fa-solid fa-gamepad",
+        "fa-solid fa-music", "fa-solid fa-camera", "fa-solid fa-globe", "fa-solid fa-desktop", "fa-solid fa-terminal",
+        "fa-solid fa-gear", "fa-solid fa-house", "fa-solid fa-briefcase", "fa-solid fa-cart-shopping", "fa-solid fa-clock",
+        "fa-solid fa-heart", "fa-solid fa-flag", "fa-solid fa-lock", "fa-solid fa-key", "fa-solid fa-bell",
+        "fa-solid fa-paintbrush", "fa-solid fa-film", "fa-solid fa-microphone", "fa-solid fa-headphones",
+        "fa-solid fa-envelope", "fa-solid fa-cloud-sun", "fa-solid fa-earth-americas", "fa-solid fa-plug",
+        "fa-solid fa-tv", "fa-solid fa-wifi", "fa-solid fa-print", "fa-solid fa-mug-hot", "fa-solid fa-pizza-slice",
+        "fa-solid fa-plane", "fa-solid fa-car", "fa-solid fa-bicycle", "fa-solid fa-dumbbell", "fa-solid fa-book",
+        "fa-solid fa-graduation-cap", "fa-solid fa-briefcase-medical", "fa-solid fa-paw", "fa-solid fa-tree",
+        "fa-solid fa-sun", "fa-solid fa-moon", "fa-solid fa-snowflake", "fa-solid fa-umbrella", "fa-solid fa-palette",
+        "fa-solid fa-code", "fa-solid fa-database", "fa-solid fa-server", "fa-solid fa-shield-halved",
+        "fa-solid fa-gamepad", "fa-solid fa-dice", "fa-solid fa-chess", "fa-solid fa-guitar", "fa-solid fa-drum",
+        "fa-solid fa-video", "fa-solid fa-image", "fa-solid fa-comment", "fa-solid fa-thumbs-up", "fa-solid fa-crown",
+        "fa-solid fa-gift", "fa-solid fa-basket-shopping", "fa-solid fa-utensils", "fa-solid fa-mug-saucer"
+    };
+
+    private string SwatchClass(string c) => c.Equals(_color, StringComparison.OrdinalIgnoreCase) ? "settings-swatch is-active" : "settings-swatch";
+    private string IconClass(string i) => i == _icon ? "apop-icon is-active" : "apop-icon";
+
+    private Task SetColor(string c) { _color = c; return Apply(); }
+    private Task SetIcon(string i) { _icon = i; return Apply(); }
+    private Task Apply() => OnApply.InvokeAsync((_icon, _color));
+    private Task Close() => OnClose.InvokeAsync();
+}

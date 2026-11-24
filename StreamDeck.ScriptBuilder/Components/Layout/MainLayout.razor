@@ -1,0 +1,30 @@
+@inherits LayoutComponentBase
+@inject HotkeyService Hotkeys
+@* Injection "à vide" (comme ci-dessus) pour forcer la construction du service au lancement — v1.34.17 : sans ça, le
+   petit serveur qui reçoit la configuration envoyée par le téléphone ne démarrerait qu'au premier endroit qui
+   l'injecte pour de vrai (l'onglet Téléphone n'est pas forcément ouvert). *@
+@inject PcCommandServerService PcServer
+
+<main class="layout">
+    <ErrorBoundary @ref="_boundary">
+        <ChildContent>
+            @Body
+        </ChildContent>
+        <ErrorContent Context="error">
+            <div class="layout-error">
+                <span class="layout-error-icon"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                <h2>Une erreur est survenue</h2>
+                <p>@error.GetType().Name : @error.Message</p>
+                <button type="button" class="layout-error-btn" @onclick="Retry">
+                    <i class="fa-solid fa-rotate-right"></i><span>Réessayer</span>
+                </button>
+            </div>
+        </ErrorContent>
+    </ErrorBoundary>
+</main>
+
+@code {
+    private ErrorBoundary? _boundary;
+
+    private void Retry() => _boundary?.Recover();
+}

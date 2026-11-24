@@ -1,0 +1,59 @@
+@if (Open)
+{
+    <div class="@BackdropClass" @onclick="OnClose">
+        <div class="@CardClass" role="dialog" aria-modal="true" aria-label="@Title" @onclick:stopPropagation="true">
+            <header class="modal-head">
+                <h2 class="modal-title">
+                    @if (!string.IsNullOrEmpty(Icon))
+                    {
+                        <span class="modal-title-icon"><i class="@Icon"></i></span>
+                    }
+                    <span>@Title</span>
+                </h2>
+                <button type="button" class="modal-close" @onclick="OnClose" aria-label="Fermer" title="Fermer">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </header>
+
+            <div class="modal-body">
+                @ChildContent
+            </div>
+
+            @if (Footer is not null)
+            {
+                <footer class="modal-foot">
+                    @Footer
+                </footer>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public string Title { get; set; } = string.Empty;
+
+    /// <summary>Classes Font Awesome de l'icône du titre.</summary>
+    [Parameter] public string? Icon { get; set; }
+
+    /// <summary>Largeur de la carte : « narrow » (code PIN, confirmation), « medium » (listes), sinon large.</summary>
+    [Parameter] public string? Size { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public RenderFragment? Footer { get; set; }
+
+    /// <summary>Au-dessus d'une autre modale déjà ouverte (ex. AppearancePopup ouverte depuis la fenêtre "Modifier" une
+    /// page du widget) — sans ça, deux ".modal-backdrop" au même z-index se départagent par l'ordre du DOM plutôt que
+    /// par l'ordre d'ouverture, et la seconde peut se retrouver visuellement DERRIÈRE la première (v1.34.6, correctif).</summary>
+    [Parameter] public bool Elevated { get; set; }
+
+    private string CardClass => Size switch
+    {
+        "narrow" => "modal-card is-narrow",
+        "medium" => "modal-card is-medium",
+        _ => "modal-card"
+    };
+
+    private string BackdropClass => Elevated ? "modal-backdrop is-elevated" : "modal-backdrop";
+}

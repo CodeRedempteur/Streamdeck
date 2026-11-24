@@ -1,0 +1,188 @@
+@* Sélecteur de date/heure personnalisé (v1.34.7) : remplace un <input type="datetime-local"> natif, dont le rendu
+   varie trop d'une machine à l'autre (Windows/WebView2 vs Android) et ne s'intègre pas visuellement au reste de
+   l'appli — voir la demande explicite d'un composant "custom réutilisable" en modale, jour puis mois puis année puis
+   heure. Réutilisable : DateTimeField.razor (le champ + bouton qui l'ouvre) est ce que les autres composants doivent
+   utiliser ; ce fichier est la modale elle-même, appelée directement seulement si un contrôle plus spécifique est
+   nécessaire. *@
+<Modal Open="Open" Title="@Title" Icon="fa-solid fa-calendar-days" Size="medium" OnClose="Close">
+  <ChildContent>
+    <div class="dtpicker">
+        <div class="dtpicker-steps">
+            <button type="button" class="@StepClass(0)" @onclick="() => _step = 0">1. Jour</button>
+            <button type="button" class="@StepClass(1)" @onclick="() => _step = 1">2. Mois</button>
+            <button type="button" class="@StepClass(2)" @onclick="() => _step = 2">3. Année</button>
+            <button type="button" class="@StepClass(3)" @onclick="() => _step = 3">4. Heure</button>
+        </div>
+
+        @if (_step == 0)
+        {
+            <div class="dtpicker-grid dtpicker-grid-days">
+                @for (var d = 1; d <= 31; d++)
+                {
+                    var day = d;
+                    <button type="button" class="@DayClass(day)" @onclick="() => PickDay(day)">@day</button>
+                }
+            </div>
+        }
+        else if (_step == 1)
+        {
+            <div class="dtpicker-grid dtpicker-grid-months">
+                @for (var m = 1; m <= 12; m++)
+                {
+                    var month = m;
+                    <button type="button" class="@(month == _month ? "dtpicker-cell is-selected" : "dtpicker-cell")" @onclick="() => PickMonth(month)">@MonthName(month)</button>
+                }
+            </div>
+        }
+        else if (_step == 2)
+        {
+            <div class="dtpicker-year-row">
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => _yearRangeStart -= 12" aria-label="Années précédentes" title="Années précédentes"><i class="fa-solid fa-angles-left"></i></button>
+                <span class="settings-hint" style="margin:0">@_yearRangeStart – @(_yearRangeStart + 11)</span>
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="() => _yearRangeStart += 12" aria-label="Années suivantes" title="Années suivantes"><i class="fa-solid fa-angles-right"></i></button>
+            </div>
+            <div class="dtpicker-grid dtpicker-grid-years">
+                @for (var i = 0; i < 12; i++)
+                {
+                    var year = _yearRangeStart + i;
+                    <button type="button" class="@(year == _year ? "dtpicker-cell is-selected" : "dtpicker-cell")" @onclick="() => PickYear(year)">@year</button>
+                }
+            </div>
+        }
+        else if (_step == 3)
+        {
+            <p class="settings-hint" style="margin:0 0 6px">Heure</p>
+            <div class="dtpicker-grid dtpicker-grid-hours">
+                @for (var h = 0; h <= 23; h++)
+                {
+                    var hour = h;
+                    <button type="button" class="@(hour == _hour ? "dtpicker-cell is-selected" : "dtpicker-cell")" @onclick="() => _hour = hour">@hour.ToString("00")</button>
+                }
+            </div>
+            <p class="settings-hint" style="margin:10px 0 6px">Minute</p>
+            <div class="dtpicker-grid dtpicker-grid-minutes">
+                @foreach (var min in MinuteChoices)
+                {
+                    var minute = min;
+                    <button type="button" class="@(minute == _minute ? "dtpicker-cell is-selected" : "dtpicker-cell")" @onclick="() => _minute = minute">@minute.ToString("00")</button>
+                }
+            </div>
+            @* v1.34.9 : la grille ci-dessus ne propose que des paliers de 5 minutes (choix volontaire pour rester
+               cliquable rapidement) — demandé explicitement : pouvoir aussi tomber pile sur une minute précise, donc
+               un réglage fin ±1 minute juste à côté (part du palier de 5 le plus proche déjà choisi ci-dessus, ou de
+               l'heure actuelle à l'ouverture). *@
+            <div class="dtpicker-minute-precise">
+                <span>Minute précise</span>
+                <NumberStepper Value="_minute" ValueChanged="@(v => _minute = v)" Min="0" Max="59" />
+            </div>
+        }
+
+        <div class="dtpicker-summary">
+            <i class="fa-solid fa-clock"></i>
+            <span>@SummaryText</span>
+        </div>
+    </div>
+  </ChildContent>
+  <Footer>
+        @if (AllowClear)
+        {
+            <button type="button" class="settings-btn settings-btn-danger" @onclick="Clear"><i class="fa-solid fa-xmark"></i><span>Aucune échéance</span></button>
+        }
+        <button type="button" class="settings-btn" @onclick="Close">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="Confirm"><i class="fa-solid fa-check"></i><span>Valider</span></button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public string Title { get; set; } = "Choisir une date et une heure";
+    [Parameter] public DateTime? Value { get; set; }
+    [Parameter] public EventCallback<DateTime?> ValueChanged { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    /// <summary>Affiche un bouton pour effacer l'échéance (renvoie null) — masqué pour un champ où une date est toujours requise.</summary>
+    [Parameter] public bool AllowClear { get; set; } = true;
+
+    private static readonly string[] MonthNames =
+    {
+        "Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"
+    };
+
+    private static readonly int[] MinuteChoices = { 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55 };
+
+    private int _step;
+    private int _day = DateTime.Now.Day;
+    private int _month = DateTime.Now.Month;
+    private int _year = DateTime.Now.Year;
+    private int _hour = DateTime.Now.Hour;
+    private int _minute = DateTime.Now.Minute;
+    private int _yearRangeStart;
+    private bool _wasOpen;
+
+    protected override void OnParametersSet()
+    {
+        if (Open && !_wasOpen)
+        {
+            // Réinitialise à chaque ouverture depuis la valeur actuelle (ou maintenant, si vide) plutôt que de garder
+            // l'état de la dernière ouverture — sinon rouvrir le sélecteur pour une AUTRE tâche montrerait encore la
+            // date choisie précédemment.
+            // v1.34.9 : gardait auparavant seulement le palier de 5 minutes le plus proche (basis.Minute - basis.Minute % 5)
+            // même pour une échéance déjà précise — perdait la minute exacte à chaque réouverture du sélecteur pour la
+            // modifier. La minute exacte de basis est gardée telle quelle (voir aussi le réglage fin ci-dessus).
+            var basis = Value ?? DateTime.Now;
+            _day = basis.Day; _month = basis.Month; _year = basis.Year; _hour = basis.Hour; _minute = basis.Minute;
+            _yearRangeStart = (_year / 12) * 12;
+            _step = 0;
+        }
+        _wasOpen = Open;
+    }
+
+    private static string MonthName(int month) => MonthNames[month - 1];
+
+    private string SummaryText => $"{_day:00}.{_month:00}.{_year} — {_hour:00}:{_minute:00}";
+
+    private string StepClass(int step) => step == _step ? "dtpicker-step is-active" : "dtpicker-step";
+
+    private string DayClass(int day)
+    {
+        var validForMonth = day <= DateTime.DaysInMonth(_year, _month);
+        if (!validForMonth) return "dtpicker-cell is-disabled";
+        return day == _day ? "dtpicker-cell is-selected" : "dtpicker-cell";
+    }
+
+    private void PickDay(int day)
+    {
+        if (day > DateTime.DaysInMonth(_year, _month)) return;
+        _day = day;
+        _step = 1;
+    }
+
+    private void PickMonth(int month)
+    {
+        _month = month;
+        _day = Math.Min(_day, DateTime.DaysInMonth(_year, _month));
+        _step = 2;
+    }
+
+    private void PickYear(int year)
+    {
+        _year = year;
+        _day = Math.Min(_day, DateTime.DaysInMonth(_year, _month));
+        _step = 3;
+    }
+
+    private Task Close() => OnClose.InvokeAsync();
+
+    private async Task Clear()
+    {
+        await ValueChanged.InvokeAsync(null);
+        await Close();
+    }
+
+    private async Task Confirm()
+    {
+        var day = Math.Min(_day, DateTime.DaysInMonth(_year, _month));
+        await ValueChanged.InvokeAsync(new DateTime(_year, _month, day, _hour, _minute, 0));
+        await Close();
+    }
+}

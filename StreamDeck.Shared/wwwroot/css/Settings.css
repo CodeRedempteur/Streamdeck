@@ -1,0 +1,726 @@
+/* Settings : page de réglages (cartes, champs, lignes de boutons). */
+
+.settings {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 0 28px 72px;
+}
+
+/* ----- En-tête ----- */
+
+.settings-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 0 14px;
+  background: linear-gradient(var(--bg) 80%, rgba(11, 13, 18, 0));
+}
+
+.settings-title { flex: 1; min-width: 0; }
+.settings-title h1 { margin: 0; font-size: 1.35rem; font-weight: 650; }
+.settings-title p { margin: 2px 0 0; color: var(--muted); font-size: .85rem; }
+
+/* ----- Cartes ----- */
+
+.settings-card {
+  margin-top: 22px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: 0 14px 32px -20px rgba(0, 0, 0, .8);
+}
+
+.settings-card-head { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+.settings-card-head h2 { margin: 0; font-size: 1.02rem; font-weight: 650; }
+.settings-card-head p { margin: 2px 0 0; color: var(--muted); font-size: .85rem; }
+
+.settings-chip {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(79, 140, 255, .14);
+  color: var(--accent);
+}
+
+/* ----- Champs ----- */
+
+.settings-field { display: block; margin-bottom: 16px; }
+.settings-label { display: block; margin-bottom: 7px; color: var(--muted); font-size: .85rem; font-weight: 500; }
+
+.settings-input { position: relative; display: block; }
+.settings-input > i {
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.settings-input input:not([type="color"]) {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 46px 10px 42px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.settings-input-plain input:not([type="color"]) { padding-left: 14px; }
+.settings-input input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+
+.settings-input-action {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.settings-input-action:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+
+.settings-voice-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.settings-voice-tag {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2, var(--bg));
+  font-size: .84rem; color: var(--text);
+}
+.settings-voice-tag button {
+  display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--muted); cursor: pointer; font-size: .78rem;
+}
+.settings-voice-tag button:hover { color: var(--err); background: rgba(248, 113, 113, .14); }
+.settings-voice { margin-top: 4px; }
+.settings-voice .settings-btn.is-listening { border-color: var(--err); background: rgba(248, 113, 113, .14); color: var(--err); }
+.settings-voice .settings-btn.is-listening i { animation: sdVoicePulse 1s ease-in-out infinite; }
+@keyframes sdVoicePulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.settings-variables { margin-top: 4px; }
+.settings-variable {
+  padding: 12px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-2, var(--bg));
+}
+.settings-variable.is-pin-hidden { opacity: .55; }
+.settings-variable-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* ToggleSwitch (.toggle) est large de 100% par défaut (prévu pour une ligne de réglage à lui seul) — placé tel quel à
+   côté d'un champ texte/bouton dans une même ligne .settings-variable-head, il réclamait toute la largeur et forçait
+   les autres éléments de la ligne (dont le bouton corbeille) à retomber chacun sur leur propre ligne plutôt que de
+   rester alignés (remonté : "boutons collés"/"corbeille positionnée n'importe où", v1.34.3). */
+.settings-variable-head .toggle { width: auto; flex: 0 0 auto; margin-bottom: 0; }
+.settings-variable-name { flex: 1 1 140px; min-width: 120px; }
+.settings-variable-bounds { display: flex; gap: 14px; margin-top: 10px; font-size: .84rem; color: var(--muted); }
+.settings-variable-bounds label { display: flex; align-items: center; gap: 6px; }
+.settings-variable-bounds input[type="number"] {
+  width: 70px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit;
+}
+.settings-variable-value { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+.settings-input-action:focus-visible { outline: 2px solid var(--accent); }
+
+/* Téléphone en portrait : une carte de variable étroite n'a pas la place de mettre nom + type + mode + supprimer
+   sur une seule ligne — on empile plutôt que de laisser flex-wrap couper au milieu, moins lisible. */
+@media (max-width: 480px) {
+  .settings-variable-head { flex-direction: column; align-items: stretch; }
+  .settings-variable-name { flex: 1 1 auto; }
+  .settings-variable-bounds { flex-wrap: wrap; row-gap: 8px; }
+  .settings-voice .settings-btn, .settings-variables .settings-btn { width: 100%; justify-content: center; }
+}
+
+/* ----- Boutons ----- */
+
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+.settings-btn:hover { background: rgba(255, 255, 255, .09); border-color: var(--line-strong); }
+.settings-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-btn:disabled { opacity: .35; cursor: default; pointer-events: none; }
+
+.settings-btn-icon { width: 46px; padding: 0; }
+
+.settings-btn-primary { border-color: transparent; background: var(--accent); color: #fff; }
+.settings-btn-primary:hover { background: var(--accent-strong); border-color: transparent; }
+
+.settings-btn-danger { color: var(--err); }
+.settings-btn-danger:hover { background: rgba(248, 113, 113, .12); border-color: rgba(248, 113, 113, .35); }
+
+.settings-btn-add {
+  width: 100%;
+  margin-top: 14px;
+  border-style: dashed;
+  border-color: var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+}
+.settings-btn-add:hover { color: var(--text); }
+
+/* ----- Liste à sélection unique + suppression (v1.35, sonneries) ----- */
+
+.settings-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+
+.settings-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2, var(--bg));
+  overflow: hidden;
+}
+.settings-list-item.is-active { border-color: var(--accent); }
+
+.settings-list-item-main,
+button.settings-list-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-list-item-main i,
+button.settings-list-item i { color: var(--muted); }
+.settings-list-item.is-active i.fa-circle-check,
+button.settings-list-item.is-active i.fa-circle-check { color: var(--accent); }
+
+.settings-list-item .settings-btn-icon { flex: 0 0 auto; margin-right: 6px; border: 0; min-height: 34px; width: 34px; }
+
+/* ----- Test de connexion ----- */
+
+.settings-test { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.settings-test-result { display: inline-flex; align-items: center; gap: 8px; font-size: .9rem; font-weight: 500; }
+.settings-test-result.is-ok i { color: var(--ok); }
+.settings-test-result.is-err i { color: var(--err); }
+
+/* ----- Lignes de boutons ----- */
+
+.settings-empty { margin: 0 0 6px; color: var(--muted); }
+
+.settings-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 20px;
+  align-items: start;
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .02);
+}
+
+.settings-tile {
+  --size: 88px;
+  position: relative;
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.settings-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 16px; }
+
+.settings-tile-edit {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: .7rem;
+}
+
+.settings-row-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+  min-width: 0;
+}
+.settings-row-fields .settings-field { margin-bottom: 14px; }
+.settings-row-fields .settings-kind,
+.settings-row-fields .settings-hint { grid-column: 1 / -1; }
+.settings-row-fields .settings-colors { grid-column: 1 / -1; }
+
+.settings-row-actions { display: grid; grid-template-columns: repeat(2, 46px); gap: 8px; align-content: start; }
+
+/* ----- Palette ----- */
+
+.settings-colors { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+
+.settings-swatch {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18);
+  cursor: pointer;
+  transition: transform .12s ease;
+}
+.settings-swatch:hover { transform: scale(1.1); }
+.settings-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.settings-swatch.is-active { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg) inset; }
+
+.settings-swatch-custom {
+  background: rgba(255, 255, 255, .06);
+  color: var(--muted);
+  font-size: .8rem;
+}
+.settings-swatch-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+@media (max-width: 820px) {
+  .settings-row { grid-template-columns: auto 1fr; }
+  .settings-row-actions { grid-column: 1 / -1; grid-template-columns: repeat(auto-fill, 46px); }
+  .settings-row-fields { grid-template-columns: 1fr; }
+}
+
+/* Téléphone étroit : l'icône ne reste plus à côté d'un contenu qui peut devenir très haut une fois la commande
+   vocale et les variables dépliées (ça laissait une grande zone vide sous l'icône) — elle passe au-dessus. */
+@media (max-width: 480px) {
+  .settings-row { grid-template-columns: 1fr; gap: 12px; }
+  .settings-row > .settings-tile { justify-self: start; }
+  .settings-row-actions { justify-self: end; grid-template-columns: repeat(2, 42px); }
+
+  .settings-reorder-card { flex-direction: column; gap: 2px; }
+  .settings-reorder-handle { align-self: flex-start; width: 100%; height: 30px; flex-direction: row; gap: 8px; }
+  .settings-reorder-handle::after { content: "Glisser pour réordonner"; font-size: .78rem; }
+}
+
+/* ----- Type de bouton ----- */
+
+.settings-kind {
+  display: inline-flex;
+  justify-self: start;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.settings-kind-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: .9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.settings-kind-btn:hover { color: var(--text); }
+.settings-kind-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.settings-kind-btn.is-active { background: rgba(79, 140, 255, .18); color: #fff; }
+
+.settings-hint { margin: -4px 0 14px; color: var(--muted); font-size: .82rem; line-height: 1.4; }
+
+/* ----- Bulle d'info au survol (v1.34.13) : remplace une explication "i" affichée en permanence par une icône seule,
+   dont le texte n'apparaît qu'au survol/focus — voir InfoHint.razor (composant partagé aux 3 apps). Volontairement
+   simple (survol CSS pur, pas de JS de positionnement) pour éviter de reproduire les bugs d'affichage déjà rencontrés
+   avec des bulles plus complexes dans le widget cette même version. ----- */
+.info-hint {
+  position: relative;
+  display: inline-flex;
+  color: var(--accent);
+  cursor: help;
+  vertical-align: middle;
+}
+/* Quand l'icône suit du texte sur la même ligne (plutôt que seule à la place d'un ancien paragraphe) — voir les
+   call sites qui l'utilisent ainsi. */
+* + .info-hint, .info-hint + * { margin-left: 6px; }
+
+/* Remplace un ancien <p class="settings-hint"> autonome : mêmes marges verticales, icône seule (pas pleine largeur). */
+.settings-hint-row { margin: -4px 0 14px; }
+.info-hint:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 50%; }
+
+.info-hint-bubble {
+  position: absolute;
+  z-index: 50;
+  left: 0;
+  bottom: calc(100% + 8px);
+  transform: translateY(4px);
+  width: max-content;
+  /* Ancrée sur le bord GAUCHE de l'icône plutôt que centrée : la plupart des icônes "i" de l'appli sont elles-mêmes
+     proches du bord gauche de leur carte (champ, étape…), donc une bulle centrée débordait très souvent à gauche —
+     hors de la fenêtre ou de la zone visible — et son début (le texte le plus important) était invisible. Ancrer à
+     gauche veut dire qu'elle peut déborder à DROITE à la place, ce qui est sans gravité : le début du texte reste
+     toujours visible, et max-width l'empêche de sortir de l'écran de ce côté. */
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  color: var(--text);
+  font-size: .82rem;
+  font-weight: 400;
+  line-height: 1.4;
+  box-shadow: 0 14px 32px -16px rgba(0, 0, 0, .8);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+}
+.info-hint:hover .info-hint-bubble,
+.info-hint:focus-visible .info-hint-bubble,
+.info-hint:focus-within .info-hint-bubble {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Une icône proche du bord droit (rare, mais ça arrive — ex. dans un en-tête) : la bulle s'ouvrirait hors écran à
+   droite. On la bascule alors sur le bord droit de l'icône (déborde à gauche à la place). À poser sur l'élément
+   .info-hint lui-même quand on sait d'avance qu'il est proche du bord droit. */
+.info-hint.is-right-aligned .info-hint-bubble { left: auto; right: 0; }
+
+.settings-input.is-invalid input:not([type="color"]) { border-color: var(--err); }
+.settings-input.is-invalid > i { color: var(--err); }
+
+/* ----- Onglets (espaces, pages) ----- */
+
+.settings-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .03);
+  color: var(--muted);
+  font: inherit;
+  font-size: .92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.settings-tab:hover { color: var(--text); border-color: var(--line-strong); }
+.settings-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.settings-tab.is-active { border-color: rgba(79, 140, 255, .55); background: rgba(79, 140, 255, .16); color: #fff; }
+
+.settings-tab-add { width: 42px; padding: 0; justify-content: center; border-style: dashed; }
+
+.settings-tab-count {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+}
+.settings-tab-count.is-full { background: rgba(251, 191, 36, .18); color: #fbbf24; }
+
+/* ----- Éditeur d'espace ----- */
+
+.settings-ws {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 20px;
+  align-items: start;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .02);
+}
+
+.settings-ws-icon {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(79, 140, 255, .22), rgba(79, 140, 255, .06));
+  color: #fff;
+  font-size: 2rem;
+  cursor: pointer;
+}
+.settings-ws-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.settings-ws-fields { min-width: 0; }
+
+.settings-grid-size { display: flex; flex-wrap: wrap; gap: 14px 40px; }
+
+.settings-capacity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: .85rem;
+  line-height: 1.4;
+}
+.settings-capacity i { color: var(--accent); }
+
+/* ----- Barre de page ----- */
+
+.settings-page-bar { display: flex; align-items: flex-end; gap: 14px; }
+.settings-page-name { flex: 1; min-width: 0; }
+.settings-page-actions { display: flex; gap: 8px; margin-bottom: 16px; }
+
+/* ----- Confirmation de suppression ----- */
+
+.settings-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 4px 0 16px;
+  padding: 12px 16px;
+  border: 1px solid rgba(248, 113, 113, .35);
+  border-radius: 14px;
+  background: rgba(248, 113, 113, .08);
+  font-weight: 500;
+}
+.settings-confirm-actions { display: flex; gap: 8px; }
+
+@media (max-width: 820px) {
+  .settings-ws { grid-template-columns: auto 1fr; }
+  .settings-ws .settings-row-actions { grid-column: 1 / -1; }
+  .settings-page-bar { flex-wrap: wrap; }
+}
+
+/* ===== Version 3 : PC multiples, grille par page, enchaînements, sécurité, copie ===== */
+
+.settings-span-2 { grid-column: 1 / -1; min-width: 0; }
+.settings-subtitle { margin: 22px 0 12px; font-size: .95rem; font-weight: 650; }
+.settings-subtitle:first-of-type { margin-top: 4px; }
+
+.settings-hint.is-error { color: var(--err); }
+.settings-test-result.is-warn i { color: #fbbf24; }
+
+/* ----- PC ----- */
+
+.settings-pc-actions { display: grid; gap: 12px; margin-top: 18px; }
+.settings-pc-actions .toggle { margin-bottom: 0; }
+.settings-pc-actions .settings-btn { justify-self: start; }
+
+/* ----- Grille d'une page ----- */
+
+.settings-grid-box {
+  margin: 4px 0 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .02);
+}
+
+.settings-grid-title { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-weight: 650; }
+.settings-grid-title i { color: var(--accent); }
+.settings-grid-size .settings-kind { margin-bottom: 0; }
+
+/* ----- Taille d'un bouton ----- */
+
+.settings-size { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 36px; margin-bottom: 14px; }
+.settings-size .settings-hint { flex-basis: 100%; margin: 0; }
+
+/* ----- Enchaînements ----- */
+
+.settings-steps { display: grid; gap: 10px; margin-bottom: 14px; }
+.settings-steps > .settings-label { margin-bottom: 0; }
+.settings-steps > .settings-hint { margin: 0; }
+
+.settings-step {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.settings-step-num {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: rgba(79, 140, 255, .18);
+  color: var(--accent);
+  font-size: .85rem;
+  font-weight: 700;
+}
+
+.settings-step-body { min-width: 0; display: grid; gap: 10px; }
+.settings-step-body .choicefield,
+.settings-step-body .toggle { margin-bottom: 0; }
+.settings-step-input { display: block; }
+.settings-step-hint { margin: 0; }
+.settings-step-seconds .settings-label { margin-bottom: 6px; }
+.settings-step-seconds .settings-input input { max-width: 180px; }
+
+.settings-step-actions { display: flex; gap: 6px; }
+.settings-step-actions .settings-btn { width: 40px; min-height: 40px; }
+
+.settings-step-add { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-step-add .settings-btn { min-height: 40px; padding: 0 14px; font-size: .9rem; }
+
+/* ----- Sécurité ----- */
+
+.settings-security-status { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; color: var(--muted); }
+.settings-security-status i { color: var(--ok); }
+.settings-security-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.settings-security-info { margin: 14px 0 0; }
+.settings-lock { max-width: 460px; margin-left: auto; margin-right: auto; }
+
+/* ----- Copie de configuration ----- */
+
+.settings-backup-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+
+.settings-textarea {
+  display: block;
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font: .82rem/1.45 ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+  resize: vertical;
+}
+.settings-textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+
+@media (max-width: 820px) {
+  .settings-step { grid-template-columns: auto 1fr; }
+  .settings-step-actions { grid-column: 1 / -1; }
+}
+
+/* Même raison qu'avec .settings-row : sur téléphone étroit, l'icône passe au-dessus plutôt qu'à côté d'un contenu
+   qui peut devenir haut (choix multiples, variables). */
+@media (max-width: 480px) {
+  .settings-step { grid-template-columns: 1fr; gap: 10px; }
+  .settings-step > .settings-tile, .settings-step > .settings-step-num { justify-self: start; }
+  .settings-step-actions { justify-self: end; }
+}
+
+/* ----- Icône ou image (bouton et choix d'un Picker) ----- */
+
+.settings-appearance { display: grid; gap: 8px; }
+
+.settings-tile-sm { --size: 56px; width: 56px; height: 56px; }
+.settings-tile-sm .settings-tile-edit { width: 22px; height: 22px; right: -4px; bottom: -4px; }
+
+.keytile-preview {
+  width: 100%; height: 100%; display: grid; place-items: center;
+  border-radius: calc(var(--size) * .17);
+  color: var(--key-fg);
+  background: linear-gradient(155deg, rgba(255, 255, 255, .24) 0%, rgba(255, 255, 255, 0) 46%, rgba(0, 0, 0, .24) 100%), var(--key-bg);
+  font-size: calc(var(--size) * .42);
+}
+
+.settings-tile-image { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+
+.settings-file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+
+/* Champ + bouton côte à côte (parcourir / importer) : même motif que le sélecteur de dossier du Script Builder. */
+.pathfield-row { display: flex; gap: 8px; align-items: stretch; }
+.pathfield-row .settings-input,
+.pathfield-row .settings-input-plain { flex: 1 1 auto; min-width: 0; }
+.pathfield-btn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; padding: 0 14px; cursor: pointer; }
+.pathfield-error { color: #fca5a5; }
+
+.settings-option .settings-colors { margin-top: 2px; }
+
+/* ----- Indicateur d'état par PC (dans les onglets de la section PC) ----- */
+
+.settings-pc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.settings-pc-dot.is-online { background: var(--ok); box-shadow: 0 0 0 2px rgba(52, 211, 153, .18); }
+.settings-pc-dot.is-offline { background: var(--err); box-shadow: 0 0 0 2px rgba(248, 113, 113, .18); }
+.settings-pc-dot.is-checking { opacity: .5; }
+
+/* ----- Réordonner les boutons par glisser-déposer (poignée, souris uniquement) ----- */
+
+.settings-reorder-hint { margin-bottom: 4px; }
+.settings-reorder-list { display: grid; gap: 12px; }
+
+.settings-reorder-card {
+  display: flex; align-items: flex-start; gap: 4px;
+  border-radius: 18px; transition: opacity .15s ease;
+}
+.settings-reorder-card.is-dragging { opacity: .4; }
+.settings-reorder-card.is-dragover { box-shadow: 0 0 0 2px var(--accent) inset; border-radius: 18px; }
+
+.settings-reorder-handle {
+  flex: 0 0 auto; align-self: stretch; width: 28px; display: grid; place-items: center;
+  margin-top: 4px; border-radius: 8px; color: var(--muted); cursor: grab;
+  -webkit-user-drag: none; user-select: none; -webkit-user-select: none;
+}
+.settings-reorder-handle:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+.settings-reorder-handle:active { cursor: grabbing; }
+.settings-reorder-body { flex: 1 1 auto; min-width: 0; }
+
+.settings-reorder-ghost {
+  position: fixed; z-index: 1000; pointer-events: none;
+  transform: translate(14px, 10px);
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 16px; border-radius: 11px;
+  background: var(--accent); color: #fff; font-weight: 650; font-size: .88rem; white-space: nowrap;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .4);
+}

@@ -1,0 +1,11 @@
+<Router AppAssembly="typeof(App).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+    </Found>
+    <NotFound>
+        <div class="sb-notfound">
+            <h2>Page introuvable</h2>
+            <a class="settings-btn" href="/"><i class="fa-solid fa-house"></i><span>Retour à mes scripts</span></a>
+        </div>
+    </NotFound>
+</Router>

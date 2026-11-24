@@ -1,0 +1,698 @@
+@page "/settings"
+@inject BuilderConfigService Config
+@inject ScriptStore Store
+@inject MacroControlService MacroControl
+@inject ServerRestarter Restarter
+@inject IWidgetHost WidgetHost
+@inject INativePicker Picker
+@inject PhoneRunner PhoneRunnerService
+
+<div class="lib">
+    <MainHeader ActiveTab="settings" Subtitle="Où sont créés les scripts, et comment les tester." />
+
+    <ServerFolderCard ShowAdvanced="true" />
+
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-circle-info"></i></span>
+            <div>
+                <h2>Comment ça marche</h2>
+                <p>Chaque script est un fichier <code>.ps1</code> dans le dossier <code>Script</code> de ton serveur : le Stream Deck l'appelle par son nom.</p>
+            </div>
+        </div>
+        <ul class="settings-hint how-list">
+            <li>Le script généré est du PowerShell lisible : tu peux le relire, ou le copier depuis l'aperçu.</li>
+            <li>Il reste <strong>modifiable ici</strong> : le constructeur en garde le plan dans quelques lignes de commentaires en fin de fichier. Ne les modifie pas à la main.</li>
+            <li>Si tu modifies le script dans un éditeur de texte, ne le rouvre pas ici sans le dupliquer avant : l'application régénère tout le fichier à l'enregistrement.</li>
+            <li><code>BuilderUtils.ps1</code>, placé à côté de <code>server.ps1</code>, contient les fonctions communes (fenêtres, plein écran, navigateur). Il est mis à jour automatiquement.</li>
+        </ul>
+    </section>
+
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-keyboard"></i></span>
+            <div>
+                <h2>Raccourcis clavier globaux</h2>
+                <p>Marchent n'importe où sur le PC, même sans que cette application ait le focus (elle doit juste tourner).</p>
+            </div>
+        </div>
+
+        @if (_notice is not null)
+        {
+            <p class="@(_noticeOk ? "settings-test-result is-ok" : "settings-test-result is-err")">
+                <i class="@(_noticeOk ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_notice</span>
+            </p>
+        }
+
+        @foreach (var h in Config.Current.Hotkeys)
+        {
+            <div class="settings-variable">
+                <div class="settings-variable-head">
+                    <ToggleSwitch Label="@(h.Enabled ? "Actif" : "En pause")" Value="h.Enabled" ValueChanged="@(v => SetHotkeyEnabled(h, v))" />
+                    <ChoiceField Items="HotkeyActionChoices" Value="@h.Action.ToString()" ValueChanged="@(v => SetHotkeyAction(h, v))" PickerIcon="fa-solid fa-bolt" />
+                    <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveHotkey(h)" aria-label="Supprimer ce raccourci" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
+                </div>
+
+                @if (h.Action == HotkeyAction.TriggerScript)
+                {
+                    <ChoiceField Label="Script à lancer" Items="ScriptChoices" Value="@h.ScriptName" ValueChanged="@(v => SetHotkeyScript(h, v))" PickerIcon="fa-solid fa-scroll" />
+                }
+
+                <label class="settings-variable-bounds">
+                    <span>Combinaison</span>
+                    <HotkeyCapture Value="@h.Keys" ValueChanged="@(v => SetHotkeyKeys(h, v))" />
+                </label>
+            </div>
+        }
+
+        <button type="button" class="settings-btn" @onclick="AddHotkey"><i class="fa-solid fa-plus"></i><span>Ajouter un raccourci</span></button>
+        <div class="settings-hint-row"><InfoHint>Une combinaison déjà utilisée par Windows ou un autre logiciel reste simplement sans effet — essaie-la pour vérifier qu'elle marche.</InfoHint></div>
+    </section>
+
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-mobile-screen-button"></i></span>
+            <div>
+                <h2>Téléphones</h2>
+                <p>Un ou plusieurs téléphones pour le bloc « Téléphone » d'un script (sonnerie/alarme, ouvrir une application) — active d'abord la réception des commandes dans l'appli téléphone concernée (Réglages, tout en bas).</p>
+            </div>
+        </div>
+
+        @if (Config.Current.PhoneTargets.Count == 0)
+        {
+            <p class="settings-hint">Aucun téléphone pour l'instant.</p>
+        }
+        else
+        {
+            <div class="settings-tabs" role="tablist" aria-label="Téléphones">
+                @foreach (var p in Config.Current.PhoneTargets)
+                {
+                    <button type="button" class="@PhoneTabClass(p)" @onclick="() => SelectPhone(p)">
+                        <i class="fa-solid fa-mobile-screen-button"></i>
+                        <span>@p.Name</span>
+                        @if (p.Id == Config.Current.DefaultPhoneId && Config.Current.PhoneTargets.Count > 1)
+                        {
+                            <span class="settings-tab-count">par défaut</span>
+                        }
+                    </button>
+                }
+                <button type="button" class="settings-tab settings-tab-add" @onclick="AddPhone" aria-label="Ajouter un téléphone" title="Ajouter un téléphone">
+                    <i class="fa-solid fa-plus"></i>
+                </button>
+            </div>
+
+            @if (SelectedPhone is { } phone)
+            {
+                <label class="settings-field">
+                    <span class="settings-label">Nom</span>
+                    <span class="settings-input settings-input-plain">
+                        <input value="@phone.Name" @onchange='e => SetPhoneName(phone, (string?)e.Value ?? "")' placeholder="Mon téléphone" autocomplete="off" />
+                    </span>
+                </label>
+
+                <div class="settings-row-fields">
+                    <label class="settings-field">
+                        <span class="settings-label">Adresse IP du téléphone</span>
+                        <span class="settings-input settings-input-plain">
+                            <input value="@phone.IpAddress" @onchange='e => SetPhoneIp(phone, (string?)e.Value ?? "")' placeholder="192.168.1.42" autocomplete="off" spellcheck="false" />
+                        </span>
+                    </label>
+                    <label class="settings-field">
+                        <span class="settings-label">Port</span>
+                        <span class="settings-input settings-input-plain">
+                            <input type="number" min="1024" max="65535" value="@phone.Port" @onchange='e => SetPhonePort(phone, (string?)e.Value ?? "")' />
+                        </span>
+                    </label>
+                </div>
+
+                <label class="settings-field">
+                    <span class="settings-label">Jeton (affiché dans l'appli téléphone, Réglages)</span>
+                    <span class="settings-input">
+                        <i class="fa-solid fa-key"></i>
+                        <input type="@PhoneTokenType" value="@phone.Token" @onchange='e => SetPhoneToken(phone, (string?)e.Value ?? "")' autocomplete="off" spellcheck="false" />
+                        <button type="button" class="settings-input-action" @onclick="TogglePhoneToken" aria-label="Afficher ou masquer le jeton" title="Afficher ou masquer"><i class="@PhoneTokenIcon"></i></button>
+                    </span>
+                </label>
+
+                <div class="settings-test">
+                    <button type="button" class="settings-btn" @onclick="TestPhoneAsync" disabled="@_phoneTesting">
+                        <i class="@(_phoneTesting ? "fa-solid fa-spinner fa-spin" : "fa-solid fa-plug")"></i><span>Tester la connexion</span>
+                    </button>
+                    @if (_phoneResult is not null)
+                    {
+                        <span class="@(_phoneResult.Ok ? "settings-test-result is-ok" : "settings-test-result is-err")">
+                            <i class="@(_phoneResult.Ok ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_phoneResult.Message</span>
+                        </span>
+                    }
+                </div>
+
+                @if (Config.Current.PhoneTargets.Count > 1)
+                {
+                    <div class="settings-pc-actions">
+                        <ToggleSwitch Label="Téléphone par défaut" Description="Utilisé par une étape « Téléphone » qui n'en désigne pas une autre."
+                                      Value="@(phone.Id == Config.Current.DefaultPhoneId)" ValueChanged="@(v => SetDefaultPhone(phone, v))" Disabled="@(phone.Id == Config.Current.DefaultPhoneId)" />
+                        <button type="button" class="settings-btn settings-btn-danger" @onclick="() => DeletePhone(phone)">
+                            <i class="fa-solid fa-trash"></i><span>Supprimer ce téléphone</span>
+                        </button>
+                    </div>
+                }
+            }
+        }
+
+        <div class="settings-hint-row"><InfoHint>Un téléphone doit être sur le même réseau Wi-Fi que ce PC. Son adresse IP peut changer d'un réseau à l'autre — à revérifier ici si un script « Téléphone » cesse de fonctionner.</InfoHint></div>
+    </section>
+
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-tower-broadcast"></i></span>
+            <div>
+                <h2>Recevoir depuis le téléphone</h2>
+                <p>Reçoit la configuration envoyée par le téléphone (Réglages → « Envoyer au PC ») — chaque envoi devient un nouveau modèle dans l'onglet <a href="/phone">Téléphone</a>, sans rien écraser automatiquement.</p>
+            </div>
+        </div>
+
+        <ToggleSwitch Label="Recevoir des configurations du téléphone" Description="Ouvre un petit serveur local sur ce PC (rien n'est exposé en dehors de ton réseau local)."
+                      Value="Config.Current.PcServer.Enabled" ValueChanged="SetPcServerEnabled" />
+
+        @if (Config.Current.PcServer.Enabled)
+        {
+            <div class="settings-row-fields">
+                <label class="settings-field">
+                    <span class="settings-label">Adresse IP de ce PC</span>
+                    <span class="settings-input settings-input-plain">
+                        <input value="@(PcLocalIp ?? "Introuvable — vérifie la connexion réseau")" readonly />
+                    </span>
+                </label>
+                <label class="settings-field">
+                    <span class="settings-label">Port</span>
+                    <span class="settings-input settings-input-plain">
+                        <input type="number" min="1024" max="65535" value="@Config.Current.PcServer.Port" @onchange='e => SetPcServerPort((string?)e.Value ?? "")' />
+                    </span>
+                </label>
+            </div>
+
+            <label class="settings-field">
+                <span class="settings-label">Jeton (à recopier côté téléphone)</span>
+                <span class="settings-input">
+                    <i class="fa-solid fa-key"></i>
+                    <input type="@PcServerTokenType" value="@Config.Current.PcServer.Token" readonly />
+                    <button type="button" class="settings-input-action" @onclick="TogglePcServerToken" aria-label="Afficher ou masquer le jeton" title="Afficher ou masquer"><i class="@PcServerTokenIcon"></i></button>
+                </span>
+            </label>
+            <button type="button" class="settings-btn settings-btn-sm" @onclick="RegeneratePcServerToken"><i class="fa-solid fa-rotate"></i><span>Regénérer le jeton</span></button>
+
+            <div class="settings-hint-row"><InfoHint>Renseigne cette adresse IP, ce port et ce jeton dans l'appli téléphone (Réglages → « Envoyer au PC »). L'adresse IP de ce PC peut changer d'un réseau à l'autre — à revérifier ici si l'envoi cesse de fonctionner.</InfoHint></div>
+        }
+    </section>
+
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-bolt"></i></span>
+            <div>
+                <h2>Raccourcis rapides dans l'éditeur</h2>
+                <p>Ajoutent directement une action pendant que tu construis un script — actifs seulement pendant que l'éditeur a le focus (pas besoin qu'ils marchent partout sur le PC).</p>
+            </div>
+        </div>
+
+        @foreach (var q in Config.Current.QuickAddShortcuts)
+        {
+            <div class="settings-variable">
+                <div class="settings-variable-head">
+                    <ToggleSwitch Label="@(q.Enabled ? "Actif" : "En pause")" Value="q.Enabled" ValueChanged="@(v => SetQuickAddEnabled(q, v))" />
+                    <ChoiceField Items="StepChoices" Value="@q.Kind.ToString()" ValueChanged="@(v => SetQuickAddKind(q, v))" PickerIcon="fa-solid fa-list-check" />
+                    <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveQuickAdd(q)" aria-label="Supprimer ce raccourci" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
+                </div>
+                <label class="settings-variable-bounds">
+                    <span>Combinaison</span>
+                    <HotkeyCapture Value="@q.Keys" ValueChanged="@(v => SetQuickAddKeys(q, v))" />
+                </label>
+            </div>
+        }
+
+        <button type="button" class="settings-btn" @onclick="AddQuickAdd"><i class="fa-solid fa-plus"></i><span>Ajouter un raccourci rapide</span></button>
+    </section>
+
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-clock"></i></span>
+            <div>
+                <h2>Widget de bureau</h2>
+                <p>Une petite fenêtre séparée avec l'heure et un accès rapide au serveur (marche/arrêt, redémarrer, arrêter les macros). La composition des pages se règle dans l'onglet « Widget » de la page principale.</p>
+            </div>
+        </div>
+        <button type="button" class="settings-btn" @onclick="() => WidgetHost.Open()" disabled="@(!WidgetHost.CanOpen)">
+            <i class="fa-solid fa-up-right-from-square"></i><span>Ouvrir le widget</span>
+        </button>
+        <div class="settings-hint-row"><InfoHint>Sans bordure ni barre de titre : glisse-le par la petite poignée en haut, réduis-le ou ferme-le avec les boutons du widget lui-même.</InfoHint></div>
+
+        <label class="settings-variable-bounds">
+            <span>Taille</span>
+            <ChoiceField Items="WidgetSizeChoices" Value="@Config.Current.WidgetSizePreset" ValueChanged="SetWidgetSize" PickerIcon="fa-solid fa-expand" Disabled="Config.Current.WidgetFreeResize" />
+        </label>
+        <div class="settings-hint-row"><InfoHint>Prend effet à la prochaine ouverture du widget (referme-le puis rouvre-le si besoin) — ignoré si le redimensionnement libre est activé.</InfoHint></div>
+        <div class="settings-variable-head">
+            <ToggleSwitch Label="Redimensionnement libre" Description="Ignore la taille ci-dessus : tire les bords du widget à la souris pour choisir sa taille toi-même." Value="Config.Current.WidgetFreeResize" ValueChanged="SetWidgetFreeResize" />
+        </div>
+
+        <label class="settings-variable-bounds">
+            <span>Style</span>
+            <ChoiceField Items="WidgetVariantChoices" Value="@Config.Current.WidgetVariant" ValueChanged="SetWidgetVariant" PickerIcon="fa-solid fa-swatchbook" />
+        </label>
+
+        @if (Config.Current.WidgetVariant == "custom")
+        {
+            <label class="settings-variable-bounds">
+                <span>Couleur de fond</span>
+                <input type="color" value="@Config.Current.WidgetCustomBackground" @oninput="e => SetWidgetCustomBackground((string?)e.Value)" />
+            </label>
+            <label class="settings-variable-bounds">
+                <span>Couleur du texte</span>
+                <input type="color" value="@Config.Current.WidgetCustomForeground" @oninput="e => SetWidgetCustomForeground((string?)e.Value)" />
+            </label>
+        }
+
+        <label class="settings-variable-bounds">
+            <span>Police</span>
+            <ChoiceField Items="WidgetFontChoices" Value="@Config.Current.WidgetFont" ValueChanged="SetWidgetFont" PickerIcon="fa-solid fa-font" />
+        </label>
+        @if (Config.Current.WidgetFont == "custom")
+        {
+            <label class="settings-variable-bounds">
+                <span>Fichier de police (.ttf, .otf, .woff, .woff2)</span>
+                <div class="pathfield-row">
+                    <span class="settings-input settings-input-plain">
+                        <input value="@Config.Current.WidgetCustomFontPath" readonly placeholder="Aucune police importée" />
+                    </span>
+                    <button type="button" class="settings-btn pathfield-btn" @onclick="PickWidgetFont"><i class="fa-solid fa-upload"></i><span>Importer</span></button>
+                </div>
+                @if (_fontError is not null)
+                {
+                    <p class="settings-hint pathfield-error">@_fontError</p>
+                }
+            </label>
+        }
+        <div class="settings-variable-head">
+            <ToggleSwitch Label="Coins arrondis" Value="Config.Current.WidgetRoundedCorners" ValueChanged="SetWidgetRoundedCorners" />
+            <ToggleSwitch Label="Toujours au premier plan" Value="Config.Current.WidgetAlwaysOnTop" ValueChanged="SetWidgetAlwaysOnTop" />
+        </div>
+        <div class="settings-hint-row"><InfoHint>« Toujours au premier plan » est aussi accessible directement depuis le widget (l'épingle en haut à droite).</InfoHint></div>
+    </section>
+
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-envelope"></i></span>
+            <div>
+                <h2>Boîtes mail</h2>
+                <p>Affiche le courrier reçu aujourd'hui comme une page du widget, en lecture seule (plusieurs comptes possibles).</p>
+            </div>
+        </div>
+        <div class="settings-hint-row"><InfoHint>Pour Gmail (et la plupart des services avec double authentification), utilise un « mot de passe d'application » — pas ton mot de passe habituel.</InfoHint></div>
+
+        @foreach (var account in Config.Current.MailAccounts)
+        {
+            var expanded = _expandedMailAccounts.Contains(account.Id);
+            <div class="settings-mail-account">
+                <button type="button" class="settings-mail-account-head" @onclick="() => ToggleMailAccountExpanded(account)">
+                    <i class="fa-solid @(expanded ? "fa-chevron-down" : "fa-chevron-right") settings-mail-chevron"></i>
+                    <span class="settings-mail-account-name">@(string.IsNullOrWhiteSpace(account.DisplayName) ? "(sans nom)" : account.DisplayName)</span>
+                    @if (!account.Enabled)
+                    {
+                        <span class="settings-mail-badge">Désactivée</span>
+                    }
+                    @if (account.SmtpEnabled)
+                    {
+                        <span class="settings-mail-badge is-accent"><i class="fa-solid fa-paper-plane"></i> Envoi actif</span>
+                    }
+                </button>
+
+                @if (expanded)
+                {
+                    <div class="settings-mail-account-body">
+                        <div class="settings-variable-head">
+                            <span class="settings-input settings-input-plain" style="flex:1">
+                                <input value="@account.DisplayName" @onchange='e => SetMailField(account, a => a.DisplayName = (string?)e.Value ?? "")' placeholder="Nom (ex. Perso, Pro…)" autocomplete="off" spellcheck="false" />
+                            </span>
+                            <ToggleSwitch Value="account.Enabled" ValueChanged="@(v => SetMailField(account, a => a.Enabled = v))" Label="Activée" />
+                            <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveMailAccount(account)" aria-label="Retirer cette boîte mail" title="Retirer"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+
+                        <div class="settings-mail-subhead"><i class="fa-solid fa-inbox"></i> Réception (IMAP)</div>
+                        <label class="settings-variable-bounds">
+                            <span>Serveur IMAP</span>
+                            <span class="settings-input settings-input-plain">
+                                <input value="@account.ImapHost" @onchange='e => SetMailField(account, a => a.ImapHost = (string?)e.Value ?? "")' placeholder="imap.gmail.com" autocomplete="off" spellcheck="false" />
+                            </span>
+                        </label>
+                        <label class="settings-variable-bounds">
+                            <span>Port</span>
+                            <span class="settings-input settings-input-plain">
+                                <input type="number" value="@account.ImapPort" @onchange="e => SetMailPort(account, (string?)e.Value)" />
+                            </span>
+                        </label>
+                        <div class="settings-variable-head">
+                            <ToggleSwitch Value="account.UseSsl" ValueChanged="@(v => SetMailField(account, a => a.UseSsl = v))" Label="SSL/TLS" />
+                        </div>
+                        <label class="settings-variable-bounds">
+                            <span>Identifiant</span>
+                            <span class="settings-input settings-input-plain">
+                                <input value="@account.Username" @onchange='e => SetMailField(account, a => a.Username = (string?)e.Value ?? "")' autocomplete="off" spellcheck="false" />
+                            </span>
+                        </label>
+                        <label class="settings-variable-bounds">
+                            <span>Mot de passe@(string.IsNullOrEmpty(account.ProtectedPassword) ? "" : " (déjà enregistré — laisser vide pour ne pas le changer)")</span>
+                            <span class="settings-input settings-input-plain">
+                                <input type="password" @onchange="e => SetMailPassword(account, (string?)e.Value)" autocomplete="new-password" />
+                            </span>
+                        </label>
+
+                        <div class="settings-mail-subhead"><i class="fa-solid fa-paper-plane"></i> Envoi (SMTP) — pour répondre depuis le widget</div>
+                        <div class="settings-variable-head">
+                            <ToggleSwitch Value="account.SmtpEnabled" ValueChanged="@(v => SetMailField(account, a => a.SmtpEnabled = v))" Label="Activer l'envoi" Description="Réutilise le même identifiant/mot de passe que l'IMAP ci-dessus." />
+                        </div>
+                        @if (account.SmtpEnabled)
+                        {
+                            <label class="settings-variable-bounds">
+                                <span>Serveur SMTP</span>
+                                <span class="settings-input settings-input-plain">
+                                    <input value="@account.SmtpHost" @onchange='e => SetMailField(account, a => a.SmtpHost = (string?)e.Value ?? "")' placeholder="smtp.gmail.com" autocomplete="off" spellcheck="false" />
+                                </span>
+                            </label>
+                            <label class="settings-variable-bounds">
+                                <span>Port</span>
+                                <span class="settings-input settings-input-plain">
+                                    <input type="number" value="@account.SmtpPort" @onchange="e => SetMailSmtpPort(account, (string?)e.Value)" />
+                                </span>
+                            </label>
+
+                            @* Signature (v1.34.5) : logo + coordonnées ajoutés en fin de message à l'envoi — voir
+                               MailFetchService.BuildSignatureHtml. Groupée ici plutôt que dans une section séparée :
+                               n'a de sens que si l'envoi (SMTP) est configuré pour cette boîte. *@
+                            <div class="settings-mail-subhead"><i class="fa-solid fa-signature"></i> Signature — ajoutée en fin de message</div>
+                            <div class="settings-variable-head">
+                                <ToggleSwitch Value="account.SignatureEnabled" ValueChanged="@(v => SetMailField(account, a => a.SignatureEnabled = v))" Label="Cochée par défaut à l'envoi" Description="Toujours modifiable au cas par cas dans la fenêtre de composition/réponse." />
+                            </div>
+                            <label class="settings-variable-bounds">
+                                <span>Logo (optionnel)</span>
+                                <span class="settings-input settings-input-plain" style="flex:1">
+                                    <input value="@account.SignatureLogoUrl" @onchange='e => SetMailField(account, a => a.SignatureLogoUrl = (string?)e.Value ?? "")' placeholder="https://… ou choisi ci-dessous" autocomplete="off" spellcheck="false" />
+                                </span>
+                                <button type="button" class="settings-btn" @onclick="() => PickSignatureLogo(account)"><i class="fa-solid fa-image"></i><span>Choisir un fichier</span></button>
+                            </label>
+                            @if (!string.IsNullOrWhiteSpace(account.SignatureLogoUrl))
+                            {
+                                <img src="@PinImageResolver.Resolve(account.SignatureLogoUrl)" alt="" class="settings-signature-logo-preview" />
+                            }
+                            <label class="settings-variable-bounds">
+                                <span>Coordonnées (une ligne par ligne — nom, titre, téléphone, adresse…)</span>
+                                <textarea class="settings-signature-text" value="@account.SignatureText" @onchange='e => SetMailField(account, a => a.SignatureText = (string?)e.Value ?? "")' rows="4" spellcheck="false"></textarea>
+                            </label>
+                            <div class="settings-hint-row"><InfoHint>Le logo est affiché à côté du texte à l'envoi. <b>Non vérifié avec un vrai serveur SMTP</b> — un logo en fichier local est intégré au message (comme les images des touches épinglées), un lien web est chargé tel quel par le client mail du destinataire.</InfoHint></div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        <button type="button" class="settings-btn" @onclick="AddMailAccount"><i class="fa-solid fa-plus"></i><span>Ajouter une boîte mail</span></button>
+        <div class="settings-hint-row"><InfoHint>Le mot de passe est stocké protégé (DPAPI, lié à ton compte Windows) — jamais en clair dans le fichier de configuration.</InfoHint></div>
+
+        <label class="settings-variable-bounds">
+            <span>Actualisation automatique du courrier</span>
+            <span class="settings-input settings-input-plain" style="max-width:120px">
+                <input type="number" min="1" value="@Config.Current.WidgetMailRefreshMinutes" @onchange="e => SetMailRefreshMinutes((string?)e.Value)" /> min
+            </span>
+        </label>
+        <div class="settings-hint-row"><InfoHint>Le widget revérifie tout seul, à cette fréquence, sans jamais avoir besoin d'être fermé/rouvert — le bouton <i class="fa-solid fa-rotate-right"></i> sur une page courrier force juste une vérification immédiate.</InfoHint></div>
+    </section>
+</div>
+
+@code {
+    // ----- Téléphones (v1.34.13, plusieurs depuis la v1.34.21) -----
+    private Guid? _selectedPhoneId;
+    private bool _showPhoneToken;
+    private bool _phoneTesting;
+    private RunResult? _phoneResult;
+
+    /// <summary>Le téléphone sélectionné dans les onglets, ou le défaut, ou le premier, ou null s'il n'y en a aucun.</summary>
+    private PhoneTarget? SelectedPhone =>
+        Config.Current.PhoneTargets.FirstOrDefault(p => p.Id == _selectedPhoneId)
+        ?? Config.Current.DefaultPhone
+        ?? Config.Current.PhoneTargets.FirstOrDefault();
+
+    private string PhoneTabClass(PhoneTarget p) => p.Id == SelectedPhone?.Id ? "settings-tab is-active" : "settings-tab";
+    private string PhoneTokenType => _showPhoneToken ? "text" : "password";
+    private string PhoneTokenIcon => _showPhoneToken ? "fa-solid fa-eye-slash" : "fa-solid fa-eye";
+    private void TogglePhoneToken() => _showPhoneToken = !_showPhoneToken;
+
+    private void SelectPhone(PhoneTarget p)
+    {
+        _selectedPhoneId = p.Id;
+        _phoneResult = null;
+    }
+
+    private void AddPhone()
+    {
+        var p = new PhoneTarget { Name = $"Téléphone {Config.Current.PhoneTargets.Count + 1}" };
+        Config.Update(c =>
+        {
+            c.PhoneTargets.Add(p);
+            c.DefaultPhoneId ??= p.Id;
+        });
+        SelectPhone(p);
+    }
+
+    private void DeletePhone(PhoneTarget p)
+    {
+        if (Config.Current.PhoneTargets.Count <= 1) return;
+
+        Config.Update(c => c.PhoneTargets.RemoveAll(x => x.Id == p.Id));
+        _selectedPhoneId = null; // retombe sur le défaut (recalculé par Config.Update) via SelectedPhone
+        _phoneResult = null;
+    }
+
+    private void SetDefaultPhone(PhoneTarget p, bool value)
+    {
+        if (value) Config.Update(c => c.DefaultPhoneId = p.Id);
+    }
+
+    private void SetPhoneName(PhoneTarget p, string value) =>
+        Config.Update(c => { var found = c.PhoneTargets.FirstOrDefault(x => x.Id == p.Id); if (found is not null) found.Name = string.IsNullOrWhiteSpace(value) ? found.Name : value.Trim(); });
+
+    private void SetPhoneIp(PhoneTarget p, string value) =>
+        Config.Update(c => { var found = c.PhoneTargets.FirstOrDefault(x => x.Id == p.Id); if (found is not null) found.IpAddress = value.Trim(); });
+
+    private void SetPhonePort(PhoneTarget p, string value)
+    {
+        if (!int.TryParse(value, out var port)) return;
+        Config.Update(c => { var found = c.PhoneTargets.FirstOrDefault(x => x.Id == p.Id); if (found is not null) found.Port = Math.Clamp(port, 1024, 65535); });
+    }
+
+    private void SetPhoneToken(PhoneTarget p, string value) =>
+        Config.Update(c => { var found = c.PhoneTargets.FirstOrDefault(x => x.Id == p.Id); if (found is not null) found.Token = value.Trim(); });
+
+    // ----- Recevoir depuis le téléphone (v1.34.17) -----
+    private bool _showPcServerToken;
+    private string? _pcLocalIp;
+    private string? PcLocalIp => _pcLocalIp ??= PcCommandServerService.GetLocalIpAddress();
+    private string PcServerTokenType => _showPcServerToken ? "text" : "password";
+    private string PcServerTokenIcon => _showPcServerToken ? "fa-solid fa-eye-slash" : "fa-solid fa-eye";
+    private void TogglePcServerToken() => _showPcServerToken = !_showPcServerToken;
+
+    private void SetPcServerEnabled(bool value) =>
+        Config.Update(c =>
+        {
+            c.PcServer.Enabled = value;
+            if (value && string.IsNullOrWhiteSpace(c.PcServer.Token)) c.PcServer.Token = Guid.NewGuid().ToString("N");
+        });
+
+    private void SetPcServerPort(string value)
+    {
+        if (int.TryParse(value, out var port)) Config.Update(c => c.PcServer.Port = Math.Clamp(port, 1024, 65535));
+    }
+
+    private void RegeneratePcServerToken() => Config.Update(c => c.PcServer.Token = Guid.NewGuid().ToString("N"));
+
+    private async Task TestPhoneAsync()
+    {
+        if (SelectedPhone is not { } phone) { _phoneResult = new RunResult(false, "Ajoute d'abord un téléphone"); return; }
+        if (string.IsNullOrWhiteSpace(phone.IpAddress)) { _phoneResult = new RunResult(false, "Renseigne d'abord une adresse IP"); return; }
+
+        _phoneTesting = true;
+        _phoneResult = null;
+        StateHasChanged();
+
+        _phoneResult = await PhoneRunnerService.TestAsync(phone);
+        _phoneTesting = false;
+    }
+
+    private static readonly IReadOnlyList<ChoiceItem> HotkeyActionChoices = new List<ChoiceItem>
+    {
+        new(HotkeyAction.TriggerScript.ToString(), "Lancer un script", null, "fa-solid fa-scroll"),
+        new(HotkeyAction.StopAllMacros.ToString(), "Arrêter toutes les macros", null, "fa-solid fa-hand"),
+        new(HotkeyAction.RestartServer.ToString(), "Redémarrer le serveur", null, "fa-solid fa-rotate-right")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> StepChoices =
+        StepCatalog.All.Select(i => new ChoiceItem(i.Kind.ToString(), i.Title, i.Description, i.Icon)).ToList();
+
+    private static readonly IReadOnlyList<ChoiceItem> WidgetVariantChoices = new List<ChoiceItem>
+    {
+        new("dark", "Sombre", null, "fa-solid fa-moon"),
+        new("light", "Clair", null, "fa-solid fa-sun"),
+        new("glass", "Verre (translucide)", null, "fa-solid fa-layer-group"),
+        new("accent", "Accent violet", null, "fa-solid fa-wand-magic-sparkles"),
+        new("custom", "Personnalisé", null, "fa-solid fa-eye-dropper")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> WidgetFontChoices = new List<ChoiceItem>
+    {
+        new("system", "Système", null, "fa-solid fa-font"),
+        new("mono", "Mono (numérique)", null, "fa-solid fa-code"),
+        new("elegant", "Élégante", null, "fa-solid fa-feather"),
+        new("custom", "Personnalisée (importée)", null, "fa-solid fa-file-import")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> WidgetSizeChoices = new List<ChoiceItem>
+    {
+        new("compact", "Compacte", "220 × 260", "fa-solid fa-minimize"),
+        new("normal", "Normale", "280 × 360", "fa-solid fa-square"),
+        new("large", "Grande", "320 × 460", "fa-solid fa-expand")
+    };
+
+    private IReadOnlyList<ChoiceItem> ScriptChoices =>
+        Store.HasServerFolder
+            ? Store.List().Select(s => new ChoiceItem(s.Id, s.Id, s.Folder.Length > 0 ? s.Folder : null, "fa-solid fa-scroll")).ToList()
+            : Array.Empty<ChoiceItem>();
+
+    private string? _notice;
+    private bool _noticeOk;
+
+    // ----- Raccourcis globaux -----
+
+    private void AddHotkey()
+    {
+        Config.Update(c => c.Hotkeys.Add(new HotkeyBinding()));
+    }
+
+    private void RemoveHotkey(HotkeyBinding h) => Config.Update(c => c.Hotkeys.RemoveAll(x => x.Id == h.Id));
+
+    private void SetHotkeyEnabled(HotkeyBinding h, bool value) => Config.Update(c => c.Hotkeys.First(x => x.Id == h.Id).Enabled = value);
+
+    private void SetHotkeyAction(HotkeyBinding h, string value)
+    {
+        if (!Enum.TryParse<HotkeyAction>(value, out var action)) return;
+        Config.Update(c => c.Hotkeys.First(x => x.Id == h.Id).Action = action);
+    }
+
+    private void SetHotkeyScript(HotkeyBinding h, string value) => Config.Update(c => c.Hotkeys.First(x => x.Id == h.Id).ScriptName = value);
+
+    private void SetHotkeyKeys(HotkeyBinding h, string value)
+    {
+        Config.Update(c => c.Hotkeys.First(x => x.Id == h.Id).Keys = value);
+        _notice = $"Raccourci « {value} » enregistré.";
+        _noticeOk = true;
+    }
+
+    // ----- Raccourcis rapides (éditeur) -----
+
+    private void AddQuickAdd() => Config.Update(c => c.QuickAddShortcuts.Add(new QuickAddBinding()));
+
+    private void RemoveQuickAdd(QuickAddBinding q) => Config.Update(c => c.QuickAddShortcuts.RemoveAll(x => x.Id == q.Id));
+
+    private void SetQuickAddEnabled(QuickAddBinding q, bool value) => Config.Update(c => c.QuickAddShortcuts.First(x => x.Id == q.Id).Enabled = value);
+
+    private void SetQuickAddKind(QuickAddBinding q, string value)
+    {
+        if (!Enum.TryParse<StepKind>(value, out var kind)) return;
+        Config.Update(c => c.QuickAddShortcuts.First(x => x.Id == q.Id).Kind = kind);
+    }
+
+    private void SetQuickAddKeys(QuickAddBinding q, string value) => Config.Update(c => c.QuickAddShortcuts.First(x => x.Id == q.Id).Keys = value);
+
+    // ----- Widget de bureau (apparence) -----
+
+    private void SetWidgetVariant(string value) => Config.Update(c => c.WidgetVariant = value);
+
+    private void SetWidgetFont(string value) => Config.Update(c => c.WidgetFont = value);
+
+    private string? _fontError;
+
+    private async Task PickWidgetFont()
+    {
+        _fontError = null;
+        try
+        {
+            var path = await Picker.PickFileAsync(new[] { ".ttf", ".otf", ".woff", ".woff2" });
+            if (string.IsNullOrWhiteSpace(path)) return;
+            if (!File.Exists(path)) { _fontError = "Fichier introuvable."; return; }
+
+            Config.Update(c => c.WidgetCustomFontPath = new Uri(path).AbsoluteUri);
+        }
+        catch (Exception ex)
+        {
+            _fontError = $"Impossible de référencer cette police : {ex.Message}";
+        }
+    }
+
+    private void SetWidgetRoundedCorners(bool value) => WidgetHost.SetRoundedCorners(value);
+
+    private void SetWidgetAlwaysOnTop(bool value) => WidgetHost.SetAlwaysOnTop(value);
+
+    private void SetWidgetCustomBackground(string? value) => Config.Update(c => c.WidgetCustomBackground = string.IsNullOrWhiteSpace(value) ? "#12141B" : value);
+
+    private void SetWidgetCustomForeground(string? value) => Config.Update(c => c.WidgetCustomForeground = string.IsNullOrWhiteSpace(value) ? "#E7E9EE" : value);
+
+    private void SetWidgetSize(string value) => Config.Update(c => c.WidgetSizePreset = value);
+
+    private void SetWidgetFreeResize(bool value) => WidgetHost.SetFreeResize(value);
+
+    // ----- Boîtes mail -----
+
+    private readonly HashSet<string> _expandedMailAccounts = new();
+
+    private void ToggleMailAccountExpanded(MailAccount account)
+    {
+        if (!_expandedMailAccounts.Remove(account.Id)) _expandedMailAccounts.Add(account.Id);
+    }
+
+    private void AddMailAccount()
+    {
+        var account = new MailAccount();
+        _expandedMailAccounts.Add(account.Id);
+        Config.Update(c => c.MailAccounts.Add(account));
+    }
+
+    private void RemoveMailAccount(MailAccount account) => Config.Update(c => c.MailAccounts.RemoveAll(x => x.Id == account.Id));
+
+    private void SetMailSmtpPort(MailAccount account, string? value)
+    {
+        if (int.TryParse(value, out var port) && port > 0) SetMailField(account, a => a.SmtpPort = port);
+    }
+
+    /// <summary>Choisit le logo de la signature (v1.34.5) — même convention qu'une image de touche épinglée : le
+    /// chemin choisi est mémorisé en <c>file://…</c> (voir <see cref="PinImageResolver"/> pour la raison).</summary>
+    private async Task PickSignatureLogo(MailAccount account)
+    {
+        var path = await Picker.PickFileAsync(new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" });
+        if (string.IsNullOrWhiteSpace(path)) return;
+        SetMailField(account, a => a.SignatureLogoUrl = new Uri(path).AbsoluteUri);
+    }
+
+    private void SetMailField(MailAccount account, Action<MailAccount> apply) =>
+        Config.Update(c => { var a = c.MailAccounts.FirstOrDefault(x => x.Id == account.Id); if (a is not null) apply(a); });
+
+    private void SetMailPort(MailAccount account, string? value)
+    {
+        if (int.TryParse(value, out var port) && port > 0) SetMailField(account, a => a.ImapPort = port);
+    }
+
+    private void SetMailPassword(MailAccount account, string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return;
+        SetMailField(account, a => a.ProtectedPassword = MailCredentialProtector.Protect(value));
+    }
+
+    private void SetMailRefreshMinutes(string? value)
+    {
+        if (int.TryParse(value, out var minutes) && minutes > 0) Config.Update(c => c.WidgetMailRefreshMinutes = minutes);
+    }
+}

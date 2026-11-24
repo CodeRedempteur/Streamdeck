@@ -1,0 +1,158 @@
+@inject SecurityService Security
+
+<section class="settings-card">
+    <div class="settings-card-head">
+        <span class="settings-chip"><i class="fa-solid fa-shield-halved"></i></span>
+        <div>
+            <h2>Sécurité</h2>
+            <p>Un code PIN protège l'accès aux réglages et les boutons sensibles (éteindre le PC…).</p>
+        </div>
+    </div>
+
+    @if (!HasPin)
+    {
+        <p class="settings-hint">Aucun code PIN défini. Les boutons réglés sur « code PIN » demanderont une simple confirmation.</p>
+        <button type="button" class="settings-btn" @onclick="StartSet">
+            <i class="fa-solid fa-lock"></i><span>Définir un code PIN</span>
+        </button>
+    }
+    else
+    {
+        <div class="settings-security-status">
+            <i class="fa-solid fa-circle-check"></i>
+            <span>Un code PIN est défini (@SecuritySettings.MinPinLength à @SecuritySettings.MaxPinLength chiffres).</span>
+        </div>
+
+        <ToggleSwitch Label="Verrouiller les réglages" Description="Le code est demandé à chaque ouverture des réglages."
+                      Value="Sec.LockSettings" ValueChanged="SetLock" />
+
+        <div class="settings-security-actions">
+            <button type="button" class="settings-btn" @onclick="StartChange">
+                <i class="fa-solid fa-pen"></i><span>Modifier le code</span>
+            </button>
+            <button type="button" class="settings-btn settings-btn-danger" @onclick="StartRemove">
+                <i class="fa-solid fa-trash"></i><span>Supprimer le code</span>
+            </button>
+        </div>
+    }
+
+    @if (_info is not null)
+    {
+        <p class="settings-hint settings-security-info"><i class="fa-solid fa-circle-info"></i> @_info</p>
+    }
+</section>
+
+<Modal Open="@(_stage != Stage.None)" Title="@ModalTitle" Icon="fa-solid fa-lock" Size="narrow" OnClose="Close">
+    <PinPad Message="@PadMessage" OnSubmit="Submit" />
+</Modal>
+
+@code {
+    private enum Stage { None, VerifyCurrent, Enter, Confirm }
+    private enum Intent { Set, Remove }
+
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    private Stage _stage = Stage.None;
+    private Intent _intent = Intent.Set;
+    private string _first = string.Empty;
+    private string? _info;
+
+    private SecuritySettings Sec => State.Cfg.Security;
+    private bool HasPin => Sec.HasPin;
+
+    private string ModalTitle => _intent == Intent.Remove ? "Supprimer le code PIN" : HasPin ? "Modifier le code PIN" : "Définir un code PIN";
+
+    private string PadMessage => _stage switch
+    {
+        Stage.VerifyCurrent => "Entre ton code actuel",
+        Stage.Enter => $"Choisis un code de {SecuritySettings.MinPinLength} à {SecuritySettings.MaxPinLength} chiffres",
+        Stage.Confirm => "Entre le code une seconde fois",
+        _ => string.Empty
+    };
+
+    private void StartSet()
+    {
+        _intent = Intent.Set;
+        _stage = Stage.Enter;
+        _info = null;
+    }
+
+    private void StartChange()
+    {
+        _intent = Intent.Set;
+        _stage = Stage.VerifyCurrent;
+        _info = null;
+    }
+
+    private void StartRemove()
+    {
+        _intent = Intent.Remove;
+        _stage = Stage.VerifyCurrent;
+        _info = null;
+    }
+
+    private void Close()
+    {
+        _stage = Stage.None;
+        _first = string.Empty;
+    }
+
+    private void SetLock(bool value)
+    {
+        Sec.LockSettings = value;
+        State.Notify();
+    }
+
+    private PinPad.Feedback Submit(string pin)
+    {
+        switch (_stage)
+        {
+            case Stage.VerifyCurrent:
+            {
+                var check = Security.Check(Sec, pin);
+                if (!check.Ok)
+                {
+                    return check.LockedFor is { } wait
+                        ? new PinPad.Feedback(false, $"Trop d'essais : réessaie dans {(int)Math.Ceiling(wait.TotalSeconds)} s")
+                        : new PinPad.Feedback(false, "Code incorrect");
+                }
+
+                if (_intent == Intent.Remove)
+                {
+                    Security.ClearPin(Sec);
+                    _info = "Code PIN supprimé. Pense à enregistrer.";
+                    Close();
+                    State.Notify();
+                }
+                else
+                {
+                    _stage = Stage.Enter;
+                }
+
+                return new PinPad.Feedback(true);
+            }
+
+            case Stage.Enter:
+                _first = pin;
+                _stage = Stage.Confirm;
+                return new PinPad.Feedback(true);
+
+            case Stage.Confirm:
+                if (pin != _first)
+                {
+                    _stage = Stage.Enter;
+                    _first = string.Empty;
+                    return new PinPad.Feedback(false, "Les deux codes sont différents, recommence");
+                }
+
+                Security.SetPin(Sec, pin);
+                _info = "Code PIN enregistré dans la configuration en cours. Pense à enregistrer.";
+                Close();
+                State.Notify();
+                return new PinPad.Feedback(true);
+
+            default:
+                return new PinPad.Feedback(false);
+        }
+    }
+}

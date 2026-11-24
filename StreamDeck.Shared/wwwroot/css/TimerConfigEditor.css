@@ -1,0 +1,60 @@
+/* TimerConfigEditor (v1.36) : réglages d'un minuteur/chronomètre, partagé entre ButtonEditor (téléphone) et la
+   config du widget de bureau (StreamDeck.ScriptBuilder). */
+.timercfg {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.timercfg-phases {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.timercfg-phase {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.timercfg-phase-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.timercfg-phase-label {
+    flex: 1;
+}
+
+.timercfg-duration {
+    display: flex;
+    gap: 14px;
+}
+
+.timercfg-duration-field {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    opacity: .75;
+}
+
+.timercfg-display-toggles {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.timercfg-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+}

@@ -1,0 +1,37 @@
+<Modal Open="Open" Title="@Title" Icon="@IconClass" OnClose="OnClose">
+    <ChildContent>
+        @if (Result is null)
+        {
+            <p class="fb-empty"><i class="fa-solid fa-spinner fa-spin"></i> Exécution en cours…</p>
+        }
+        else
+        {
+            <p class="@(Success ? "test-status is-ok" : "test-status is-err")">
+                <i class="@(Success ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i>
+                <span>@Summary</span>
+            </p>
+            <pre class="test-output">@(string.IsNullOrWhiteSpace(Result.Output) ? "(aucune sortie)" : Result.Output)</pre>
+            <p class="settings-hint">Le script agit vraiment sur ce PC : programmes lancés, fenêtres déplacées, volume…</p>
+        }
+    </ChildContent>
+</Modal>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public string Name { get; set; } = string.Empty;
+    [Parameter] public TestResult? Result { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string Title => $"Test : {Name}";
+    private bool Success => Result is { Started: true, TimedOut: false, ExitCode: 0 };
+    private string IconClass => Result is null ? "fa-solid fa-spinner" : Success ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark";
+
+    private string Summary => Result switch
+    {
+        null => string.Empty,
+        { Started: false } => "Le script n'a pas pu être lancé",
+        { TimedOut: true } => "Arrêté : le script dure plus de 5 minutes",
+        { ExitCode: 0 } => $"Terminé en {Result.Duration.TotalSeconds:F1} s",
+        _ => $"Terminé avec le code {Result.ExitCode} ({Result.Duration.TotalSeconds:F1} s)"
+    };
+}

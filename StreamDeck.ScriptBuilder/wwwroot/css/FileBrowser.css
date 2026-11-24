@@ -1,0 +1,72 @@
+/* Sélecteur de fichiers, champ de chemin, aperçu du code, résultat de test */
+
+.pathfield-row { display: flex; gap: 8px; align-items: stretch; }
+.pathfield-row .settings-input { flex: 1 1 auto; min-width: 0; }
+.pathfield-btn { flex: 0 0 auto; }
+.pathfield .settings-hint { margin: 6px 0 0; }
+
+.fb { display: grid; gap: 12px; }
+.fb-shortcuts { display: flex; gap: 8px; flex-wrap: wrap; }
+.fb-chip {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 7px 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, .05);
+  color: var(--text); font: inherit; font-size: .82rem; cursor: pointer;
+}
+.fb-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-chip:hover { border-color: var(--accent); background: rgba(79, 140, 255, .12); }
+.fb-chip:focus-visible { outline: 2px solid var(--accent); }
+
+.fb-bar { display: flex; gap: 8px; align-items: stretch; }
+.fb-path { flex: 1 1 auto; min-width: 0; }
+.fb-tools { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+.fb-search { flex: 1 1 200px; min-width: 0; }
+.fb-toggle {
+  display: inline-flex; align-items: center; gap: 8px; padding: 0 14px; min-height: 46px;
+  border: 1px solid var(--line); border-radius: 12px; background: transparent; color: var(--muted);
+  font: inherit; font-size: .84rem; cursor: pointer;
+}
+.fb-toggle.is-on { border-color: var(--accent); color: var(--text); }
+.fb-toggle:focus-visible { outline: 2px solid var(--accent); }
+
+.fb-list { list-style: none; margin: 0; padding: 0; max-height: 44vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; }
+.fb-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 14px;
+  border: 0; border-bottom: 1px solid var(--line); background: transparent;
+  color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.fb-list li:last-child .fb-item { border-bottom: 0; }
+.fb-item:hover { background: rgba(255, 255, 255, .06); }
+.fb-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fb-item > i { width: 20px; text-align: center; color: var(--muted); }
+.fb-item .fa-folder { color: #fbbf24; }
+.fb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.fb-error { margin: 0; color: var(--err); font-size: .88rem; }
+.fb-empty { margin: 0; padding: 18px; text-align: center; color: var(--muted); font-size: .9rem; }
+.fb-current { flex: 1 1 auto; min-width: 0; margin-right: 12px; color: var(--muted); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+
+/* ----- Aperçu du code ----- */
+
+.code { border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: #0a0c11; }
+.code-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: .84rem; }
+.code-copy { display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: .8rem; cursor: pointer; }
+.code-copy:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, .06); }
+.code-copy:focus-visible { outline: 2px solid var(--accent); }
+
+.code-toggle { display: inline-flex; align-items: center; gap: 9px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.code-toggle:hover { color: var(--text); }
+.code-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.code.is-closed .code-head { border-bottom: 0; }
+
+/* Une ligne = un bloc : les sauts de ligne sont conservés, les lignes longues défilent au lieu d'écraser le texte. */
+.code-body { padding: 12px 0; max-height: calc(100vh - 230px); overflow: auto; font: 12.5px/1.6 "Cascadia Code", Consolas, "SF Mono", monospace; }
+.code-row { display: block; min-height: 1.6em; padding: 0 16px; white-space: pre; }
+.code-line { color: #d6deeb; }
+.code-comment { color: #6b7a99; }
+
+/* ----- Résultat d'un test ----- */
+
+.test-status { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-weight: 600; }
+.test-status.is-ok { color: var(--ok); }
+.test-status.is-err { color: var(--err); }
+.test-output { margin: 0 0 12px; padding: 12px 14px; max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: #0a0c11; color: #d6deeb; font: 12.5px/1.55 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; word-break: break-word; }

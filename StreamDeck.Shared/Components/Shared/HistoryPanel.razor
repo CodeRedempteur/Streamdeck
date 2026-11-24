@@ -1,0 +1,140 @@
+@implements IDisposable
+@inject HistoryService History
+@inject VoiceHistoryService VoiceHistory
+@inject IAppPlatform Platform
+
+<Modal Open="Open" Title="Historique" Icon="fa-solid fa-clock-rotate-left" Size="medium" OnClose="OnClose">
+    <ChildContent>
+    @if (Platform.CanListen)
+    {
+        <div class="settings-tabs" role="tablist" aria-label="Historique">
+            <button type="button" class="@(_tab == Tab.Actions ? "settings-tab is-active" : "settings-tab")" @onclick="() => _tab = Tab.Actions">
+                <i class="fa-solid fa-bolt"></i><span>Actions</span>
+            </button>
+            <button type="button" class="@(_tab == Tab.Voice ? "settings-tab is-active" : "settings-tab")" @onclick="() => _tab = Tab.Voice">
+                <i class="fa-solid fa-microphone"></i><span>Voix</span>
+            </button>
+        </div>
+    }
+
+    @if (_tab == Tab.Actions)
+    {
+        @if (Entries.Count == 0)
+        {
+            <p class="history-empty">Aucun appui pour l'instant.</p>
+        }
+        else
+        {
+            <ul class="history-list">
+                @foreach (var e in Entries)
+                {
+                    <li class="@RowClass(e)">
+                        <span class="history-icon"><i class="@IconFor(e)"></i></span>
+                        <span class="history-text">
+                            <span class="history-title">@e.Label</span>
+                            <span class="history-msg">@e.Message</span>
+                        </span>
+                        <span class="history-time">@e.Time.ToString("HH:mm:ss")</span>
+                    </li>
+                }
+            </ul>
+        }
+    }
+    else
+    {
+        @if (VoiceEntries.Count == 0)
+        {
+            <p class="history-empty">Rien entendu pour l'instant.</p>
+        }
+        else
+        {
+            <ul class="history-list">
+                @foreach (var v in VoiceEntries)
+                {
+                    <li class="@VoiceRowClass(v)">
+                        <span class="history-icon"><i class="@VoiceIconFor(v)"></i></span>
+                        <span class="history-text">
+                            <span class="history-title">« @v.Utterance »</span>
+                            <span class="history-msg">@VoiceMessage(v)</span>
+                        </span>
+                        <span class="history-time">@v.Time.ToString("HH:mm:ss")</span>
+                    </li>
+                }
+            </ul>
+        }
+    }
+    </ChildContent>
+
+    <Footer>
+        <button type="button" class="history-btn" @onclick="Clear" disabled="@(_tab == Tab.Actions ? Entries.Count == 0 : VoiceEntries.Count == 0)">
+            <i class="fa-solid fa-trash"></i><span>Effacer</span>
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    /// <summary>Ouvre directement sur l'onglet Voix plutôt qu'Actions (ex. depuis un lien "voir l'historique vocal").</summary>
+    [Parameter] public bool StartOnVoiceTab { get; set; }
+
+    private enum Tab { Actions, Voice }
+    private Tab _tab;
+    private bool _wasOpen;
+
+    protected override void OnParametersSet()
+    {
+        // Seulement à l'ouverture (jamais après, sinon un clic manuel sur l'onglet Actions serait aussitôt annulé
+        // par un futur rendu qui repasserait par ici avec StartOnVoiceTab toujours vrai côté appelant).
+        if (Open && !_wasOpen && StartOnVoiceTab && Platform.CanListen) _tab = Tab.Voice;
+        _wasOpen = Open;
+    }
+
+    private IReadOnlyList<HistoryEntry> Entries => History.Entries;
+    private IReadOnlyList<VoiceHistoryEntry> VoiceEntries => VoiceHistory.Entries;
+
+    protected override void OnInitialized()
+    {
+        History.Changed += OnChanged;
+        VoiceHistory.Changed += OnChanged;
+    }
+
+    private void OnChanged()
+    {
+        if (Open) _ = InvokeAsync(StateHasChanged);
+    }
+
+    private static string RowClass(HistoryEntry e) => $"history-row {e.Kind}";
+
+    private static string IconFor(HistoryEntry e) => e.Kind switch
+    {
+        "is-ok" => "fa-solid fa-circle-check",
+        "is-warn" => "fa-solid fa-circle-exclamation",
+        _ => "fa-solid fa-circle-xmark"
+    };
+
+    private static string VoiceRowClass(VoiceHistoryEntry v) => v.Matched ? "history-row is-ok" : "history-row is-off";
+
+    private static string VoiceIconFor(VoiceHistoryEntry v) => v.Matched ? "fa-solid fa-circle-check" : "fa-solid fa-ear-listen";
+
+    private static string VoiceMessage(VoiceHistoryEntry v) => v switch
+    {
+        { Matched: true, WakeWordHeard: true } => $"Mot de réveil + « {v.Button} » déclenché",
+        { Matched: true } => $"« {v.Button} » déclenché",
+        { WakeWordHeard: true } => "Mot de réveil entendu, pas de commande reconnue à la suite",
+        _ => "Pas de correspondance"
+    };
+
+    private void Clear()
+    {
+        if (_tab == Tab.Actions) History.Clear();
+        else VoiceHistory.Clear();
+    }
+
+    public void Dispose()
+    {
+        History.Changed -= OnChanged;
+        VoiceHistory.Changed -= OnChanged;
+    }
+}

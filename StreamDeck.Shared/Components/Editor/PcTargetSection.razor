@@ -1,0 +1,128 @@
+@* v1.34.17, demandé explicitement ("ajoute le moyen d'exporter depuis le téléphone un config à importer sur le pc
+   donc un bouton envoyé au pc") : complète le sens PC → téléphone de la v1.34.16 (onglet « Téléphone » de Script
+   Builder) par le sens inverse — envoie la configuration de CE téléphone au petit serveur qui tourne dans Script
+   Builder (voir PcCommandServerService), qui l'ajoute comme un nouveau modèle là-bas. Même esprit que
+   PhoneServerSection (symétrique, PC → téléphone) mais ici le téléphone est le CLIENT : l'adresse/port/jeton sont
+   saisis à la main (affichés côté PC, Réglages → « Recevoir depuis le téléphone »), pas générés ici. *@
+<section class="settings-card">
+    <div class="settings-card-head">
+        <span class="settings-chip"><i class="fa-solid fa-paper-plane"></i></span>
+        <div>
+            <h2>Envoyer au PC</h2>
+            <p>Envoie la configuration de ce téléphone à Script Builder (onglet « Téléphone »), en réseau direct — active d'abord la réception côté PC (Réglages → « Recevoir depuis le téléphone »).</p>
+        </div>
+    </div>
+
+    <div class="settings-row-fields">
+        <label class="settings-field">
+            <span class="settings-label">Adresse IP du PC</span>
+            <span class="settings-input settings-input-plain">
+                <input value="@PcIp" @onchange='e => SetPcIp((string?)e.Value ?? "")' placeholder="192.168.1.10" autocomplete="off" spellcheck="false" />
+            </span>
+        </label>
+        <label class="settings-field">
+            <span class="settings-label">Port</span>
+            <span class="settings-input settings-input-plain">
+                <input type="number" min="1024" max="65535" value="@PcPort" @onchange='e => SetPcPort((string?)e.Value ?? "")' />
+            </span>
+        </label>
+    </div>
+
+    <label class="settings-field">
+        <span class="settings-label">Jeton (affiché côté Script Builder, Réglages)</span>
+        <span class="settings-input">
+            <i class="fa-solid fa-key"></i>
+            <input type="@TokenType" value="@PcToken" @onchange='e => SetPcToken((string?)e.Value ?? "")' autocomplete="off" spellcheck="false" />
+            <button type="button" class="settings-input-action" @onclick="ToggleToken" aria-label="Afficher ou masquer le jeton" title="Afficher ou masquer"><i class="@TokenIcon"></i></button>
+        </span>
+    </label>
+
+    <div class="settings-test">
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="SendAsync" disabled="@_sending">
+            <i class="@(_sending ? "fa-solid fa-spinner fa-spin" : "fa-solid fa-paper-plane")"></i><span>Envoyer au PC</span>
+        </button>
+        @if (_result is not null)
+        {
+            <span class="@(_result.Ok ? "settings-test-result is-ok" : "settings-test-result is-err")">
+                <i class="@(_result.Ok ? "fa-solid fa-circle-check" : "fa-solid fa-circle-xmark")"></i><span>@_result.Message</span>
+            </span>
+        }
+    </div>
+
+    <div class="settings-hint-row"><InfoHint>Envoie ce que tu vois actuellement à l'écran (même avant d'avoir cliqué « Enregistrer » en haut). Côté PC, chaque envoi devient un NOUVEAU modèle dans l'onglet Téléphone — rien n'y est jamais écrasé automatiquement.</InfoHint></div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+
+    private bool _showToken;
+    private bool _sending;
+    private RunResult? _result;
+
+    private string TokenType => _showToken ? "text" : "password";
+    private string TokenIcon => _showToken ? "fa-solid fa-eye-slash" : "fa-solid fa-eye";
+    private void ToggleToken() => _showToken = !_showToken;
+
+    private string PcIp => State.Cfg.PcPushTarget?.IpAddress ?? "";
+    private int PcPort => State.Cfg.PcPushTarget?.Port ?? 8767;
+    private string PcToken => State.Cfg.PcPushTarget?.Token ?? "";
+
+    private void EnsureTarget(Action<PcPushTarget> apply)
+    {
+        State.Cfg.PcPushTarget ??= new PcPushTarget();
+        apply(State.Cfg.PcPushTarget);
+        State.Notify();
+    }
+
+    private void SetPcIp(string value) => EnsureTarget(t => t.IpAddress = value.Trim());
+
+    private void SetPcPort(string value)
+    {
+        if (int.TryParse(value, out var port)) EnsureTarget(t => t.Port = Math.Clamp(port, 1024, 65535));
+    }
+
+    private void SetPcToken(string value) => EnsureTarget(t => t.Token = value.Trim());
+
+    private async Task SendAsync()
+    {
+        var target = State.Cfg.PcPushTarget;
+        if (target is null || string.IsNullOrWhiteSpace(target.IpAddress))
+        {
+            _result = new RunResult(false, "Renseigne d'abord l'adresse IP du PC");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(target.Token))
+        {
+            _result = new RunResult(false, "Renseigne d'abord le jeton affiché côté PC");
+            return;
+        }
+
+        _sending = true;
+        _result = null;
+        State.Notify();
+
+        var json = ConfigTransfer.Export(State.Cfg, includeTokens: false);
+        var url = $"http://{target.IpAddress}:{target.Port}/command?token={Uri.EscapeDataString(target.Token)}&action=importconfig";
+
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            using var response = await http.PostAsync(url, content);
+            var text = await response.Content.ReadAsStringAsync();
+            _result = response.IsSuccessStatusCode
+                ? new RunResult(true, string.IsNullOrWhiteSpace(text) ? "Envoyé au PC." : text)
+                : new RunResult(false, $"Le PC a refusé ({(int)response.StatusCode}) : {text}");
+        }
+        catch (Exception ex)
+        {
+            _result = new RunResult(false, $"Connexion impossible : {ex.Message}");
+        }
+        finally
+        {
+            _sending = false;
+            State.Notify();
+        }
+    }
+}

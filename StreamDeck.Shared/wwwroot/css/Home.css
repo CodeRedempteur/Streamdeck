@@ -1,0 +1,300 @@
+/* Home : écran principal (barre + grille de boutons carrés). */
+
+.home {
+  --bar-h: 60px;
+  --pager-h: 0px;
+  --home-gap: 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ----- Barre supérieure ----- */
+
+.home-bar {
+  flex: 0 0 var(--bar-h);
+  height: var(--bar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(20, 24, 34, .55);
+}
+
+.home-brand { display: flex; align-items: center; gap: 12px; }
+
+.home-brand-mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #fff;
+  background: linear-gradient(145deg, var(--accent), #2d5fd0);
+  box-shadow: 0 6px 14px -6px var(--accent);
+  font-size: .95rem;
+}
+
+.home-bar-actions { display: flex; align-items: center; gap: 14px; }
+
+/* v1.34.9 : ni "Stream Deck" en toutes lettres (.home-brand-name, retiré du balisage) ni le texte du statut ("Serveur
+   en ligne"…) ne s'affichent plus — demandé explicitement, l'icône et la pastille de couleur suffisent (le texte
+   reste en info-bulle, voir Home.razor). .home-status garde juste assez de padding pour que la pastille ait une
+   vraie zone cliquable/visible, sans la largeur qu'occupait le texte à côté. */
+.home-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: .82rem;
+  font-weight: 500;
+}
+.home-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.home-status.is-online { color: var(--text); }
+.home-status.is-online .home-status-dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(52, 211, 153, .18); }
+.home-status.is-offline { color: var(--text); }
+.home-status.is-offline .home-status-dot { background: var(--err); box-shadow: 0 0 0 3px rgba(248, 113, 113, .18); }
+
+.home-status.is-waking { color: var(--text); }
+.home-status.is-waking .home-status-dot {
+  background: #fbbf24;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, .2);
+  animation: home-blink 1s ease-in-out infinite;
+}
+@keyframes home-blink { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .home-status.is-waking .home-status-dot { animation: none; } }
+
+.home-icon-btn {
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color .15s ease, background .15s ease;
+}
+.home-icon-btn:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.home-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Envoi au serveur en pause (bouton de la barre du haut). */
+.home-icon-btn.is-paused { color: #fbbf24; border-color: rgba(251, 191, 36, .4); background: rgba(251, 191, 36, .12); }
+.home-icon-btn.is-paused:hover { border-color: rgba(251, 191, 36, .6); background: rgba(251, 191, 36, .18); }
+
+/* "Retrouver le téléphone" en cours de sonnerie : bouton "Arrêter". */
+.home-icon-btn.is-ringing { color: var(--err); border-color: rgba(248, 113, 113, .4); background: rgba(248, 113, 113, .12); animation: home-blink 1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .home-icon-btn.is-ringing { animation: none; } }
+
+/* ----- Espaces de travail (onglets) ----- */
+
+.home-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.home-tabs::-webkit-scrollbar { display: none; }
+.home-tabs-spacer { flex: 1; }
+
+.home-tab {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: .9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.home-tab:hover { color: var(--text); border-color: var(--line-strong); }
+.home-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.home-tab.is-active {
+  border-color: rgba(79, 140, 255, .55);
+  background: rgba(79, 140, 255, .16);
+  color: #fff;
+}
+
+/* ----- Pages (pagination) ----- */
+
+.home-pager {
+  flex: 0 0 var(--pager-h);
+  height: var(--pager-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.home-pager-btn {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.home-pager-btn:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.home-pager-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.home-pager-btn:disabled { opacity: .3; cursor: default; pointer-events: none; }
+
+.home-dots { display: flex; align-items: center; }
+
+.home-dot {
+  width: 30px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.home-dot::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .25);
+  transition: width .18s ease, background .18s ease;
+}
+.home-dot:hover::before { background: rgba(255, 255, 255, .5); }
+.home-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: 10px; }
+.home-dot.is-active::before { width: 24px; background: var(--accent); }
+
+.home-pager-label { min-width: 0; max-width: 220px; overflow: hidden; color: var(--muted); font-size: .85rem; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ----- Grille ----- */
+
+.home-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  touch-action: pan-y;
+}
+
+.home-deck {
+  /* Côté du carré : le plus grand possible sans dépasser l'écran, en largeur comme en hauteur. */
+  --size: min(
+    (100vw - (var(--cols) + 1) * var(--home-gap)) / var(--cols),
+    (100vh - var(--bar-h) - var(--pager-h) - (var(--rows) + 1) * var(--home-gap)) / var(--rows)
+  );
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), var(--size));
+  grid-auto-rows: var(--size);
+  gap: var(--home-gap);
+  justify-content: center;
+  align-content: center;
+  padding: var(--home-gap);
+}
+
+/* Une case de la grille : la tuile la remplit (les tuiles larges ou hautes couvrent plusieurs cases). */
+.home-cell { min-width: 0; min-height: 0; }
+.home-cell > * { width: 100%; height: 100%; }
+
+/* ----- État vide ----- */
+
+.home-empty {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.home-empty h2 { margin: 6px 0 0; font-size: 1.25rem; }
+.home-empty p { margin: 0 0 12px; color: var(--muted); }
+.home-empty-icon {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 1.8rem;
+}
+
+.home-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 20px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+}
+.home-cta:hover { background: var(--accent-strong); }
+.home-cta:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+/* ----- Toast ----- */
+
+.home-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 48px);
+  padding: 12px 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  box-shadow: 0 16px 34px -12px rgba(0, 0, 0, .8);
+  font-weight: 600;
+}
+.home-toast.is-ok i { color: var(--ok); }
+.home-toast.is-info i { color: var(--accent); }
+.home-toast.is-warn i { color: #fbbf24; }
+.home-toast.is-err i { color: var(--err); }
+
+/* ----- Petits écrans (téléphone) ----- */
+
+@media (max-width: 560px) {
+  .home-pager-label { display: none; }
+  .home-bar { padding: 0 12px; gap: 8px; }
+  .home-bar-actions { gap: 8px; }
+
+  /* Pareil pour le nom de chaque espace de travail : l'icône (propre à chaque espace) suffit à les distinguer une
+     fois qu'on les connaît, et le nom complet reste accessible par un appui long (title). */
+  .home-tabs { padding: 0 4px; gap: 6px; }
+  .home-tab { padding: 0 10px; gap: 0; min-height: 38px; }
+  .home-tab span:last-child { display: none; }
+}

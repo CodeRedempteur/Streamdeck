@@ -1,0 +1,692 @@
+@inject IMacroRecorder Recorder
+@inject BuilderConfigService Config
+
+<article class="@CardClass">
+    <header class="step-head">
+        @if (ShowCollapse)
+        {
+            <button type="button" class="step-btn step-chevron" @onclick="ToggleCollapsed" aria-expanded="@(Collapsed ? "false" : "true")"
+                    aria-label="@(Collapsed ? "Déplier l'action" : "Replier l'action")" title="@(Collapsed ? "Déplier" : "Replier")">
+                <i class="@(Collapsed ? "fa-solid fa-chevron-right" : "fa-solid fa-chevron-down")"></i>
+            </button>
+        }
+        <span class="step-num">@(Index + 1)</span>
+        <span class="step-icon"><i class="@Info.Icon"></i></span>
+        <div class="step-title" @onclick="ToggleCollapsed">
+            <strong>@Info.Title</strong>
+            @if (Summary.Length > 0)
+            {
+                <span>@Summary</span>
+            }
+        </div>
+
+        <div class="step-actions">
+            <button type="button" class="step-btn" @onclick="ToggleEnabled" aria-label="@(Step.Enabled ? "Désactiver l'étape" : "Activer l'étape")" title="@(Step.Enabled ? "Désactiver (reste dans le script, en commentaire)" : "Réactiver")">
+                <i class="@(Step.Enabled ? "fa-solid fa-eye" : "fa-solid fa-eye-slash")"></i>
+            </button>
+            <button type="button" class="step-btn" @onclick="() => Move(-1)" disabled="@(Index == 0)" aria-label="Monter" title="Monter"><i class="fa-solid fa-arrow-up"></i></button>
+            <button type="button" class="step-btn" @onclick="() => Move(1)" disabled="@(Index >= Count - 1)" aria-label="Descendre" title="Descendre"><i class="fa-solid fa-arrow-down"></i></button>
+            <button type="button" class="step-btn" @onclick="Duplicate" aria-label="Dupliquer" title="Dupliquer"><i class="fa-solid fa-clone"></i></button>
+            <button type="button" class="step-btn step-btn-danger" @onclick="Remove" aria-label="Supprimer" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
+        </div>
+    </header>
+
+    @foreach (var issue in Issues)
+    {
+        <p class="@(issue.Level == IssueLevel.Error ? "step-issue is-error" : "step-issue is-warn")">
+            <i class="@(issue.Level == IssueLevel.Error ? "fa-solid fa-circle-xmark" : "fa-solid fa-triangle-exclamation")"></i>
+            <span>@issue.Message</span>
+        </p>
+    }
+
+    @if (Step.Enabled && !Collapsed)
+    {
+        @if (Tabs.Count > 0)
+        {
+            <div class="step-tabs" role="tablist">
+                @foreach (var tab in Tabs)
+                {
+                    <button type="button" role="tab" aria-selected="@(CurrentTab == tab.Id ? "true" : "false")"
+                            class="@(CurrentTab == tab.Id ? "step-tab is-active" : "step-tab")" @onclick="() => _tab = tab.Id">
+                        <i class="@tab.Icon"></i><span>@tab.Title</span>
+                        @if (tab.Dot) { <span class="step-tab-dot" title="Option activée"></span> }
+                    </button>
+                }
+            </div>
+        }
+
+        <div class="step-body">
+            @switch (Step.Kind)
+            {
+                case StepKind.OpenApp when CurrentTab == "action":
+                    <ChoiceField Label="Que veux-tu ouvrir ?" Items="TargetChoices" Value="@Step.Target.ToString()" ValueChanged="SetTarget"
+                                 PickerIcon="fa-solid fa-rocket" />
+
+                    @if (Step.Target == TargetKind.Uri)
+                    {
+                        <label class="settings-field">
+                            <span class="settings-label">Adresse</span>
+                            <span class="settings-input">
+                                <i class="fa-solid fa-link"></i>
+                                <input @bind="Step.Path" @bind:event="oninput" @bind:after="Changed" placeholder="steam://rungameid/251570  ou  https://…" autocomplete="off" spellcheck="false" />
+                            </span>
+                        </label>
+                    }
+                    else
+                    {
+                        <PathField Label="@(Step.Target == TargetKind.Program ? "Programme" : "Fichier ou dossier")"
+                                   Value="@Step.Path" ValueChanged="SetPath"
+                                   Mode="@(Step.Target == TargetKind.Program ? BrowseMode.File : BrowseMode.FileOrFolder)"
+                                   Extensions="@(Step.Target == TargetKind.Program ? FileSystemBrowser.ProgramExtensions : null)"
+                                   Placeholder="@(Step.Target == TargetKind.Program ? @"C:\Program Files\MonApp\MonApp.exe" : @"C:\Users\moi\Documents")" />
+                    }
+
+                    @if (Step.Target == TargetKind.Program)
+                    {
+                        <div class="settings-field pathfield">
+                            <span class="settings-label">Arguments (facultatif)</span>
+                            <div class="pathfield-row">
+                                <span class="settings-input settings-input-plain">
+                                    <input @bind="Step.Arguments" @bind:event="oninput" @bind:after="Changed" placeholder="Options ajoutées au lancement" autocomplete="off" spellcheck="false" aria-label="Arguments" />
+                                </span>
+                                <button type="button" class="settings-btn pathfield-btn" @onclick="OpenArgs" title="Options courantes pour ce programme">
+                                    <i class="fa-solid fa-lightbulb"></i><span>Suggestions</span>
+                                </button>
+                            </div>
+                            <p class="settings-hint">
+                                @if (ArgumentCatalog.HasSpecific(ProgramName))
+                                {
+                                    <span>Des options courantes existent pour <strong>@ProgramName</strong> : bouton « Suggestions ».</span>
+                                }
+                                else
+                                {
+                                    <span>Options de lancement du programme, séparées par des espaces. Chaque programme a les siennes : dans une invite de commandes, tape son nom suivi de <code>/?</code> ou <code>--help</code> pour les voir.</span>
+                                }
+                            </p>
+                        </div>
+
+                        <PathField Label="Dossier de travail (facultatif)" Value="@Step.WorkingDirectory" ValueChanged="SetWorkingDirectory"
+                                   Mode="BrowseMode.Folder" Placeholder="Par défaut : celui du programme" />
+                    }
+                    break;
+
+                case StepKind.OpenApp when CurrentTab == "security":
+                    @if (Step.Target == TargetKind.Program)
+                    {
+                        <ToggleSwitch Label="Exécuter en administrateur" Description="Windows demandera une confirmation (UAC) sur l'écran du PC."
+                                      Value="Step.RunAsAdmin" ValueChanged="SetAdmin" />
+                    }
+                    <ToggleSwitch Label="Ne pas relancer s'il tourne déjà"
+                                  Description="Utile pour Steam, Spotify… (nécessite le nom de processus, déduit du programme)."
+                                  Value="Step.SkipIfRunning" ValueChanged="SetSkip" />
+                    break;
+
+                case StepKind.OpenApp when CurrentTab == "window":
+                    <WindowOptionsEditor Options="Step.Window" OnChanged="Changed" ShowEnable="true" ShowProcess="true"
+                                         DefaultProcess="@ProgramName" />
+                    break;
+
+                case StepKind.OpenBrowser when CurrentTab == "action":
+                    <label class="settings-field">
+                        <span class="settings-label">Adresse de la page</span>
+                        <span class="settings-input">
+                            <i class="fa-solid fa-globe"></i>
+                            <input @bind="Step.Url" @bind:event="oninput" @bind:after="Changed" placeholder="https://…" autocomplete="off" spellcheck="false" />
+                        </span>
+                    </label>
+                    <ChoiceField Label="Navigateur" Items="BrowserChoices" Value="@Step.Browser" ValueChanged="SetBrowser" PickerIcon="fa-solid fa-globe" />
+                    <p class="settings-hint">Ouvre toujours une <strong>nouvelle fenêtre</strong>, même si le navigateur est déjà ouvert, puis la place comme demandé.</p>
+                    break;
+
+                case StepKind.OpenBrowser when CurrentTab == "window":
+                    <WindowOptionsEditor Options="Step.Window" OnChanged="Changed" ShowWait="false" />
+                    break;
+
+                case StepKind.Window when CurrentTab == "action":
+                    <ProcessNameField Label="Programme dont il faut gérer la fenêtre" Value="@Step.ProcessName" ValueChanged="SetProcessName"
+                                      Placeholder="ex : Spotify, Nexaflow" Hint="Le programme doit être lancé (par une étape précédente ou déjà ouvert)." />
+                    break;
+
+                case StepKind.Window when CurrentTab == "window":
+                    <WindowOptionsEditor Options="Step.Window" OnChanged="Changed" />
+                    break;
+
+                case StepKind.Wait:
+                    <label class="settings-field">
+                        <span class="settings-label">Durée (secondes)</span>
+                        <span class="settings-input settings-input-plain">
+                            <input type="number" min="0" max="3600" @bind="Step.Seconds" @bind:after="Changed" aria-label="Durée en secondes" />
+                        </span>
+                    </label>
+                    break;
+
+                case StepKind.Close:
+                    <ChoiceField Label="Cible" Items="CloseTargetChoices" Value="@Step.CloseTarget.ToString()" ValueChanged="SetCloseTarget" PickerIcon="fa-solid fa-xmark" />
+
+                    @if (Step.CloseTarget == CloseTarget.BrowserWindowTitle)
+                    {
+                        <label class="settings-field">
+                            <span class="settings-label">Titre de la fenêtre (contient)</span>
+                            <span class="settings-input">
+                                <i class="fa-solid fa-window-restore"></i>
+                                <input @bind="Step.WindowTitleContains" @bind:event="oninput" @bind:after="Changed" placeholder="ex : YouTube, Gmail, Netflix" autocomplete="off" spellcheck="false" />
+                            </span>
+                        </label>
+                        <ChoiceField Label="Navigateur" Items="BrowserChoices" Value="@Step.Browser" ValueChanged="SetBrowser" PickerIcon="fa-solid fa-globe" />
+                        <p class="settings-hint">Cible par le <strong>titre de la page</strong> (visible dans l'onglet), pas par son adresse : Chrome et Edge n'exposent pas l'adresse au niveau de la fenêtre Windows. Ne marche que sur une fenêtre ouverte en <strong>nouvelle fenêtre</strong> (comme le fait l'étape « Ouvrir un site web ») — un onglet dans une fenêtre existante n'a pas sa propre fenêtre à fermer.</p>
+                    }
+                    else
+                    {
+                        <ProcessNameField Label="Programme à fermer" Value="@Step.ProcessName" ValueChanged="SetProcessName" Placeholder="ex : notepad, Spotify" />
+                    }
+
+                    <ToggleSwitch Label="Arrêt immédiat" Description="Sinon, on demande une fermeture normale (le programme peut demander de sauvegarder, refuser…)."
+                                  Value="Step.Force" ValueChanged="SetForce" />
+                    break;
+
+                case StepKind.Volume:
+                    <ChoiceField Label="Action" Items="VolumeChoices" Value="@Step.VolumeMode.ToString()" ValueChanged="SetVolumeMode" PickerIcon="fa-solid fa-volume-high" />
+                    @if (Step.VolumeMode == VolumeMode.Set)
+                    {
+                        <label class="settings-field">
+                            <span class="settings-label">Niveau : <strong>@Step.Level %</strong></span>
+                            <input type="range" class="step-range" min="0" max="100" step="1" @bind="Step.Level" @bind:event="oninput" @bind:after="Changed" aria-label="Niveau de volume" />
+                        </label>
+                    }
+                    <p class="settings-hint">Utilise les fonctions de volume du serveur (NfcNative.ps1, dans le dossier du serveur).</p>
+                    break;
+
+                case StepKind.Media:
+                    <ChoiceField Label="Touche" Items="MediaChoices" Value="@Step.MediaKey" ValueChanged="SetMediaKey" PickerIcon="fa-solid fa-music" />
+                    break;
+
+                case StepKind.Spotify:
+                    <ChoiceField Label="Que lancer ?" Items="SpotifyChoices" Value="@Step.SpotifyMode.ToString()" ValueChanged="SetSpotifyMode" PickerIcon="fa-brands fa-spotify" />
+                    @if (Step.SpotifyMode == SpotifyMode.Playlist)
+                    {
+                        <label class="settings-field">
+                            <span class="settings-label">Playlist</span>
+                            <span class="settings-input">
+                                <i class="fa-brands fa-spotify"></i>
+                                <input @bind="Step.ContextUri" @bind:event="oninput" @bind:after="Changed" placeholder="spotify:playlist:3jHTU7WR8XITmkmzhxGcUK" autocomplete="off" spellcheck="false" />
+                            </span>
+                        </label>
+                        <label class="settings-field">
+                            <span class="settings-label">Appareil (le nom contient…, facultatif)</span>
+                            <span class="settings-input settings-input-plain">
+                                <input @bind="Step.DeviceName" @bind:event="oninput" @bind:after="Changed" placeholder="iPhone" autocomplete="off" />
+                            </span>
+                        </label>
+                        <label class="settings-field">
+                            <span class="settings-label">Type d'appareil de secours (facultatif)</span>
+                            <span class="settings-input settings-input-plain">
+                                <input @bind="Step.DeviceType" @bind:event="oninput" @bind:after="Changed" placeholder="Smartphone" autocomplete="off" />
+                            </span>
+                        </label>
+                    }
+                    <ToggleSwitch Label="Ouvrir Spotify (réduit) avant" Description="Nécessaire pour qu'un appareil de lecture existe sur le PC."
+                                  Value="Step.LaunchSpotify" ValueChanged="SetLaunchSpotify" />
+                    <p class="settings-hint">Utilise ton SpotifyHelper.ps1 (dans le dossier du serveur).</p>
+                    break;
+
+                case StepKind.SendKeys:
+                    <div class="settings-field pathfield">
+                        <span class="settings-label">Touches</span>
+                        <div class="pathfield-row">
+                            <span class="settings-input">
+                                <i class="fa-solid fa-keyboard"></i>
+                                <input @bind="Step.Keys" @bind:event="oninput" @bind:after="Changed" placeholder="{F11}" autocomplete="off" spellcheck="false" />
+                            </span>
+                            <button type="button" class="settings-btn pathfield-btn" @onclick="() => _keyPickerOpen = true" title="Composer avec un clavier visuel">
+                                <i class="fa-solid fa-keyboard"></i><span>Clavier visuel</span>
+                            </button>
+                        </div>
+                    </div>
+                    <p class="settings-hint">Envoyées à la fenêtre active. Place l'étape après « Gérer une fenêtre » pour cibler la bonne.</p>
+                    break;
+
+                case StepKind.Custom:
+                    <label class="settings-field">
+                        <span class="settings-label">Code PowerShell</span>
+                        <textarea class="settings-textarea" rows="6" spellcheck="false" placeholder="Write-Host &quot;Bonjour&quot;"
+                                  @bind="Step.Code" @bind:event="oninput" @bind:after="Changed"></textarea>
+                    </label>
+                    break;
+
+                case StepKind.Toggle:
+                    <div class="settings-hint-row"><InfoHint>L'état est mémorisé entre deux appuis sur ce bouton (même après avoir redémarré le PC). Une seule des deux suites s'exécute à chaque appui.</InfoHint></div>
+
+                    <div class="tgl-branch">
+                        <div class="tgl-branch-head"><i class="fa-solid fa-play"></i><strong>Au premier appui (marche)</strong></div>
+                        @for (var i = 0; i < Step.OnSteps.Count; i++)
+                        {
+                            var oi = i;
+                            <StepCard @key="Step.OnSteps[oi].Id" Step="Step.OnSteps[oi]" Index="oi" Count="Step.OnSteps.Count" ShowCollapse="false"
+                                      OnChanged="Changed" OnMove="d => MoveSub(Step.OnSteps, oi, d)" OnRemove="() => RemoveSub(Step.OnSteps, oi)" OnDuplicate="() => DuplicateSub(Step.OnSteps, oi)" />
+                        }
+                        <button type="button" class="ed-add tgl-add" @onclick="() => _onAddOpen = true"><i class="fa-solid fa-plus"></i><span>Ajouter une action (marche)</span></button>
+                    </div>
+
+                    <div class="tgl-branch">
+                        <div class="tgl-branch-head"><i class="fa-solid fa-stop"></i><strong>À l'appui suivant (arrêt)</strong></div>
+                        @for (var i = 0; i < Step.OffSteps.Count; i++)
+                        {
+                            var oi = i;
+                            <StepCard @key="Step.OffSteps[oi].Id" Step="Step.OffSteps[oi]" Index="oi" Count="Step.OffSteps.Count" ShowCollapse="false"
+                                      OnChanged="Changed" OnMove="d => MoveSub(Step.OffSteps, oi, d)" OnRemove="() => RemoveSub(Step.OffSteps, oi)" OnDuplicate="() => DuplicateSub(Step.OffSteps, oi)" />
+                        }
+                        <button type="button" class="ed-add tgl-add" @onclick="() => _offAddOpen = true"><i class="fa-solid fa-plus"></i><span>Ajouter une action (arrêt)</span></button>
+                    </div>
+                    break;
+
+                case StepKind.Macro:
+                    @if (!Recorder.CanRecord)
+                    {
+                        <p class="settings-hint"><i class="fa-solid fa-triangle-exclamation"></i> L'enregistrement n'est disponible que dans l'application Windows (elle observe la souris et le clavier du PC pour enregistrer).</p>
+                    }
+                    else if (_recording)
+                    {
+                        <div class="macro-recording">
+                            <p class="macro-recording-status"><i class="fa-solid fa-circle macro-dot"></i> Enregistrement en cours… <strong>@FormatElapsed(_elapsed)</strong></p>
+                            <p class="settings-hint">Appuie sur <strong>@ScriptGenerator.ControlKeyLabel(Step.MacroStopKey)</strong> à tout moment pour arrêter, ou attends la durée maximale (@Step.MacroMaxDurationSeconds s). Change de fenêtre et fais les actions à répéter : tout ce qui se passe sur le PC est capturé, pas seulement ici.</p>
+                            <button type="button" class="settings-btn settings-btn-danger" @onclick="CancelRecording"><i class="fa-solid fa-stop"></i><span>Arrêter maintenant</span></button>
+                        </div>
+                    }
+                    else
+                    {
+                        <label class="settings-field">
+                            <span class="settings-label">Durée maximale d'enregistrement (secondes)</span>
+                            <span class="settings-input settings-input-plain">
+                                <input type="number" min="1" max="600" @bind="Step.MacroMaxDurationSeconds" @bind:after="Changed" aria-label="Durée maximale en secondes" />
+                            </span>
+                        </label>
+
+                        <ChoiceField Label="Touche pour arrêter l'enregistrement" Items="MacroControlKeyChoices" Value="@Step.MacroStopKey.ToString()" ValueChanged="SetMacroStopKey" PickerIcon="fa-solid fa-keyboard" />
+                        <ChoiceField Label="Touche pour annuler la relecture" Items="MacroControlKeyChoices" Value="@Step.MacroAbortKey.ToString()" ValueChanged="SetMacroAbortKey" PickerIcon="fa-solid fa-keyboard" />
+                        <ToggleSwitch Label="Enregistrer les déplacements de souris" Description="Désactivé : seuls les clics et les touches sont enregistrés (script plus léger, plus robuste si la résolution d'écran change)."
+                                      Value="Step.MacroCaptureMouseMoves" ValueChanged="SetMacroCaptureMouseMoves" />
+                        <ToggleSwitch Label="Arrêter si la souris est déplacée manuellement" Description="Utile surtout pour les macros qui déplacent la souris : reprendre la main dessus pendant la relecture l'arrête aussitôt, sans attendre la touche d'annulation."
+                                      Value="Step.MacroStopOnManualMove" ValueChanged="SetMacroStopOnManualMove" />
+
+                        <button type="button" class="settings-btn settings-btn-primary" @onclick="StartRecording">
+                            <i class="fa-solid fa-circle-dot"></i><span>@(Step.MacroActions.Count > 0 ? "Réenregistrer" : "Enregistrer")</span>
+                        </button>
+
+                        @if (Step.MacroActions.Count > 0)
+                        {
+                            <p class="settings-hint">
+                                @Step.MacroActions.Count évènement(s) enregistré(s), durée totale ~@FormatElapsed(TimeSpan.FromMilliseconds(Step.MacroActions.Sum(a => a.DelayMs))).
+                            </p>
+                            <button type="button" class="settings-btn settings-btn-danger" @onclick="ClearMacro"><i class="fa-solid fa-trash"></i><span>Effacer l'enregistrement</span></button>
+                        }
+
+                        <div class="settings-hint-row"><InfoHint>La touche d'annulation de relecture (« @ScriptGenerator.ControlKeyLabel(Step.MacroAbortKey) » par défaut) est vérifiée pendant que le script rejoue la macro : elle l'arrête presque tout de suite, où qu'en soit la relecture.</InfoHint></div>
+                    }
+                    break;
+
+                case StepKind.Phone:
+                    @if (Config.Current.PhoneTargets.Count > 1)
+                    {
+                        <ChoiceField Label="Téléphone" Items="PhoneTargetChoices" Value="@PhoneTargetValue" ValueChanged="SetPhoneTarget" PickerIcon="fa-solid fa-mobile-screen-button" />
+                    }
+                    else if (Config.Current.PhoneTargets.Count == 0)
+                    {
+                        <div class="settings-hint-row"><InfoHint>Aucun téléphone configuré pour l'instant — ajoute-en un dans Réglages → Téléphone.</InfoHint></div>
+                    }
+                    <ChoiceField Label="Action" Items="PhoneActionChoices" Value="@Step.PhoneAction.ToString()" ValueChanged="SetPhoneAction" PickerIcon="fa-solid fa-bell" />
+                    <div class="settings-hint-row"><InfoHint>Utilise le petit serveur du téléphone (à activer dans l'app téléphone, Réglages → « Commandes depuis le PC »).</InfoHint></div>
+                    @if (Step.PhoneAction == PhoneAction.OpenApp)
+                    {
+                        <label class="settings-field">
+                            <span class="settings-label">
+                                <span>Paquet de l'application (ex : com.spotify.music)</span>
+                                <InfoHint>Le nom du paquet Android de l'application (pas son nom affiché) — visible par ex. dans son adresse sur le Play Store.</InfoHint>
+                            </span>
+                            <span class="settings-input settings-input-plain">
+                                <input @bind="Step.PhoneAppPackage" @bind:event="oninput" @bind:after="Changed" placeholder="com.spotify.music" autocomplete="off" spellcheck="false" />
+                            </span>
+                        </label>
+                    }
+                    break;
+            }
+        </div>
+    }
+</article>
+
+<ChoicePicker Open="_argsOpen" Title="Options courantes" Icon="fa-solid fa-lightbulb" Items="_argItems" OnPick="PickArgument" OnClose="() => _argsOpen = false" />
+<KeyPicker Open="_keyPickerOpen" OnApply="ApplyKeys" OnClose="() => _keyPickerOpen = false" />
+<ChoicePicker Open="_onAddOpen" Title="Ajouter une action (marche)" Icon="fa-solid fa-play" Items="SubStepChoices" OnPick="k => AddSub(Step.OnSteps, k, isOn: true)" OnClose="() => _onAddOpen = false" />
+<ChoicePicker Open="_offAddOpen" Title="Ajouter une action (arrêt)" Icon="fa-solid fa-stop" Items="SubStepChoices" OnPick="k => AddSub(Step.OffSteps, k, isOn: false)" OnClose="() => _offAddOpen = false" />
+
+@code {
+    private static readonly IReadOnlyList<ChoiceItem> TargetChoices = new List<ChoiceItem>
+    {
+        new(nameof(TargetKind.Program), "Un programme", "Un .exe, un .bat ou un raccourci, avec arguments", "fa-solid fa-gear"),
+        new(nameof(TargetKind.Document), "Un fichier ou un dossier", "S'ouvre avec le programme par défaut", "fa-solid fa-folder-open"),
+        new(nameof(TargetKind.Uri), "Une adresse", "https://…, steam://rungameid/…, spotify:…", "fa-solid fa-link")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> BrowserChoices = new List<ChoiceItem>
+    {
+        new("chrome", "Google Chrome", null, "fa-brands fa-chrome"),
+        new("msedge", "Microsoft Edge", null, "fa-brands fa-edge"),
+        new("brave", "Brave", null, "fa-solid fa-globe")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> CloseTargetChoices = new List<ChoiceItem>
+    {
+        new(nameof(CloseTarget.Process), "Un programme entier", "Ferme toutes ses fenêtres, par son nom de processus", "fa-solid fa-window-close"),
+        new(nameof(CloseTarget.BrowserWindowTitle), "Une page précise du navigateur", "Cible par le titre de la fenêtre, sans fermer le reste", "fa-solid fa-window-minimize")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> VolumeChoices = new List<ChoiceItem>
+    {
+        new(nameof(VolumeMode.Set), "Régler le niveau", null, "fa-solid fa-sliders"),
+        new(nameof(VolumeMode.Mute), "Couper le son", null, "fa-solid fa-volume-xmark"),
+        new(nameof(VolumeMode.Unmute), "Remettre le son", null, "fa-solid fa-volume-high"),
+        new(nameof(VolumeMode.ToggleMute), "Basculer le muet", null, "fa-solid fa-volume-off")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> MediaChoices = new List<ChoiceItem>
+    {
+        new("playpause", "Lecture / pause", null, "fa-solid fa-play"),
+        new("next", "Piste suivante", null, "fa-solid fa-forward-step"),
+        new("prev", "Piste précédente", null, "fa-solid fa-backward-step"),
+        new("stop", "Stop", null, "fa-solid fa-stop")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> SpotifyChoices = new List<ChoiceItem>
+    {
+        new(nameof(SpotifyMode.LikedSongs), "Titres likés", "En lecture aléatoire", "fa-solid fa-heart"),
+        new(nameof(SpotifyMode.Playlist), "Une playlist", "Par son adresse spotify:playlist:…", "fa-solid fa-list")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> MacroControlKeyChoices = new List<ChoiceItem>
+    {
+        new(nameof(MacroControlKey.Escape), "Échap", null, "fa-solid fa-keyboard"),
+        new(nameof(MacroControlKey.F9), "F9", null, "fa-solid fa-keyboard"),
+        new(nameof(MacroControlKey.F10), "F10", null, "fa-solid fa-keyboard"),
+        new(nameof(MacroControlKey.F11), "F11", null, "fa-solid fa-keyboard"),
+        new(nameof(MacroControlKey.F12), "F12", null, "fa-solid fa-keyboard"),
+        new(nameof(MacroControlKey.Pause), "Pause", null, "fa-solid fa-keyboard"),
+        new(nameof(MacroControlKey.ScrollLock), "Arrêt défil.", null, "fa-solid fa-keyboard")
+    };
+
+    [Parameter, EditorRequired] public ScriptStep Step { get; set; } = new();
+    [Parameter] public int Index { get; set; }
+    [Parameter] public int Count { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+    [Parameter] public EventCallback<int> OnMove { get; set; }
+    [Parameter] public EventCallback OnRemove { get; set; }
+    [Parameter] public EventCallback OnDuplicate { get; set; }
+
+    /// <summary>Bloc replié : seul l'en-tête reste visible.</summary>
+    [Parameter] public bool Collapsed { get; set; }
+
+    /// <summary>Affiche le chevron replier/déplier (false pour une étape imbriquée dans une branche Basculer).</summary>
+    [Parameter] public bool ShowCollapse { get; set; } = true;
+    [Parameter] public EventCallback OnToggleCollapsed { get; set; }
+
+    private record Tab(string Id, string Title, string Icon, bool Dot);
+
+    /// <summary>Onglet affiché à l'ouverture du bloc (action, security, window).</summary>
+    [Parameter] public string InitialTab { get; set; } = "action";
+
+    private string _tab = "action";
+
+    protected override void OnInitialized() => _tab = InitialTab;
+    private bool _argsOpen;
+    private bool _keyPickerOpen;
+    private bool _onAddOpen;
+    private bool _offAddOpen;
+    private IReadOnlyList<ArgumentSuggestion> _argSuggestions = Array.Empty<ArgumentSuggestion>();
+    private IReadOnlyList<ChoiceItem> _argItems = Array.Empty<ChoiceItem>();
+
+    /// <summary>Actions proposées dans les branches d'un Basculer : les mêmes que partout, sauf « Basculer » lui-même (pas d'imbrication).</summary>
+    private static readonly IReadOnlyList<ChoiceItem> SubStepChoices =
+        StepCatalog.All.Where(i => i.Kind != StepKind.Toggle).Select(i => new ChoiceItem(i.Kind.ToString(), i.Title, i.Description, i.Icon)).ToList();
+
+    private void AddSub(List<ScriptStep> branch, string kind, bool isOn)
+    {
+        if (isOn) _onAddOpen = false; else _offAddOpen = false;
+        if (!Enum.TryParse<StepKind>(kind, out var k)) return;
+
+        var step = new ScriptStep { Kind = k };
+        if (k == StepKind.Window) step.Window = new WindowOptions { Enabled = true, State = WindowState.Maximize };
+        branch.Add(step);
+        Changed();
+    }
+
+    private Task MoveSub(List<ScriptStep> branch, int index, int delta)
+    {
+        var target = index + delta;
+        if (target < 0 || target >= branch.Count) return Task.CompletedTask;
+
+        (branch[index], branch[target]) = (branch[target], branch[index]);
+        return Changed();
+    }
+
+    private Task RemoveSub(List<ScriptStep> branch, int index)
+    {
+        branch.RemoveAt(index);
+        return Changed();
+    }
+
+    private Task DuplicateSub(List<ScriptStep> branch, int index)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(branch[index]);
+        var copy = System.Text.Json.JsonSerializer.Deserialize<ScriptStep>(json)!;
+        copy.Id = Guid.NewGuid();
+        branch.Insert(index + 1, copy);
+        return Changed();
+    }
+
+    /// <summary>Onglets du bloc : les blocs longs sont découpés pour rester compacts.</summary>
+    private IReadOnlyList<Tab> Tabs => Step.Kind switch
+    {
+        StepKind.OpenApp => new[]
+        {
+            new Tab("action", "Action", "fa-solid fa-bolt", false),
+            new Tab("security", "Sécurité", "fa-solid fa-shield-halved", Step.RunAsAdmin || Step.SkipIfRunning),
+            new Tab("window", "Fenêtre", "fa-solid fa-window-maximize", Step.Window.Enabled)
+        },
+        StepKind.OpenBrowser or StepKind.Window => new[]
+        {
+            new Tab("action", Step.Kind == StepKind.Window ? "Programme" : "Action", "fa-solid fa-bolt", false),
+            new Tab("window", "Fenêtre", "fa-solid fa-window-maximize", false)
+        },
+        _ => Array.Empty<Tab>()
+    };
+
+    private string CurrentTab => Tabs.Any(t => t.Id == _tab) ? _tab : "action";
+
+    /// <summary>Programme lancé, déduit du chemin (sert aux suggestions et à l'indication du processus).</summary>
+    private string ProgramName => ScriptGenerator.ProcessNameFor(new ScriptStep { Path = Step.Path, Target = Step.Target });
+
+    /// <summary>Résumé sous le titre (vide s'il ne dirait rien de plus que le titre).</summary>
+    private string Summary
+    {
+        get
+        {
+            var summary = ScriptGenerator.Title(Step);
+            return summary == Info.Title ? string.Empty : summary;
+        }
+    }
+
+    private Task ToggleCollapsed() => OnToggleCollapsed.InvokeAsync();
+
+    private void OpenArgs()
+    {
+        _argSuggestions = ArgumentCatalog.For(ProgramName);
+        _argItems = _argSuggestions
+            .Select((a, i) => new ChoiceItem(i.ToString(), a.Value, a.Description, "fa-solid fa-lightbulb"))
+            .ToList();
+        _argsOpen = true;
+    }
+
+    private Task PickArgument(string index)
+    {
+        _argsOpen = false;
+        if (int.TryParse(index, out var i) && i >= 0 && i < _argSuggestions.Count)
+            Step.Arguments = ArgumentCatalog.Append(Step.Arguments, _argSuggestions[i].Value);
+        return Changed();
+    }
+
+    private Task ApplyKeys(string value)
+    {
+        _keyPickerOpen = false;
+        Step.Keys = value;
+        return Changed();
+    }
+
+    private StepInfo Info => StepCatalog.Of(Step.Kind);
+
+    private List<StepIssue> Issues =>
+        StepValidator.Check(Step, p => File.Exists(p) || Directory.Exists(p));
+
+    private string CardClass
+    {
+        get
+        {
+            var css = "step";
+            if (!Step.Enabled) css += " is-disabled";
+            if (Issues.Any(i => i.Level == IssueLevel.Error)) css += " has-error";
+            return css;
+        }
+    }
+
+    private Task Changed() => OnChanged.InvokeAsync();
+    private Task Move(int delta) => OnMove.InvokeAsync(delta);
+    private Task Remove() => OnRemove.InvokeAsync();
+    private Task Duplicate() => OnDuplicate.InvokeAsync();
+
+    private Task ToggleEnabled() { Step.Enabled = !Step.Enabled; return Changed(); }
+    private Task SetPath(string v) { Step.Path = v; return Changed(); }
+    private Task SetWorkingDirectory(string v) { Step.WorkingDirectory = v; return Changed(); }
+    private Task SetProcessName(string v) { Step.ProcessName = v; return Changed(); }
+    private Task SetAdmin(bool v) { Step.RunAsAdmin = v; return Changed(); }
+    private Task SetSkip(bool v) { Step.SkipIfRunning = v; return Changed(); }
+    private Task SetForce(bool v) { Step.Force = v; return Changed(); }
+
+    private Task SetCloseTarget(string v)
+    {
+        if (Enum.TryParse<CloseTarget>(v, out var t)) Step.CloseTarget = t;
+        return Changed();
+    }
+    private Task SetLaunchSpotify(bool v) { Step.LaunchSpotify = v; return Changed(); }
+    private Task SetBrowser(string v) { Step.Browser = v; return Changed(); }
+    private Task SetMediaKey(string v) { Step.MediaKey = v; return Changed(); }
+
+    private Task SetTarget(string v)
+    {
+        if (Enum.TryParse<TargetKind>(v, out var t)) Step.Target = t;
+        return Changed();
+    }
+
+    private Task SetVolumeMode(string v)
+    {
+        if (Enum.TryParse<VolumeMode>(v, out var m)) Step.VolumeMode = m;
+        return Changed();
+    }
+
+    private Task SetSpotifyMode(string v)
+    {
+        if (Enum.TryParse<SpotifyMode>(v, out var m)) Step.SpotifyMode = m;
+        return Changed();
+    }
+
+    private static readonly IReadOnlyList<ChoiceItem> PhoneActionChoices = new List<ChoiceItem>
+    {
+        new(nameof(PhoneAction.FindPhone), "Sonnerie / alarme", "Fait sonner et vibrer le téléphone (comme « Retrouver mon téléphone »)", "fa-solid fa-bell"),
+        new(nameof(PhoneAction.OpenApp), "Ouvrir une application", "Lance une application sur le téléphone par son paquet Android", "fa-solid fa-mobile-screen-button")
+    };
+
+    private Task SetPhoneAction(string v)
+    {
+        if (Enum.TryParse<PhoneAction>(v, out var m)) Step.PhoneAction = m;
+        return Changed();
+    }
+
+    // ----- Téléphone ciblé (v1.34.21, "plusieurs téléphone") -----
+    private IReadOnlyList<ChoiceItem> PhoneTargetChoices => Config.Current.PhoneTargets
+        .Select(p => new ChoiceItem(p.Id.ToString(), p.Name, null, "fa-solid fa-mobile-screen-button"))
+        .ToList();
+
+    /// <summary>Si l'étape ne désigne aucun téléphone (null) ou vise un téléphone supprimé depuis, affiche le défaut.</summary>
+    private string PhoneTargetValue =>
+        (Step.PhoneId is { } id && Config.Current.PhoneTargets.Any(p => p.Id == id) ? id : Config.Current.DefaultPhoneId)?.ToString() ?? "";
+
+    private Task SetPhoneTarget(string v)
+    {
+        Step.PhoneId = Guid.TryParse(v, out var id) ? id : null;
+        return Changed();
+    }
+
+    // ----- Macro -----
+
+    private bool _recording;
+    private TimeSpan _elapsed;
+    private CancellationTokenSource? _recordCts;
+
+    private async Task StartRecording()
+    {
+        if (!Recorder.CanRecord || _recording) return;
+
+        _recording = true;
+        _elapsed = TimeSpan.Zero;
+        _recordCts = new CancellationTokenSource();
+        var progress = new Progress<TimeSpan>(t =>
+        {
+            _elapsed = t;
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            var result = await Recorder.RecordAsync(Step.MacroMaxDurationSeconds, Step.MacroStopKey, Step.MacroCaptureMouseMoves, progress, _recordCts.Token);
+            Step.MacroActions = result.Actions.ToList();
+        }
+        finally
+        {
+            _recording = false;
+            _recordCts.Dispose();
+            _recordCts = null;
+        }
+
+        await Changed();
+    }
+
+    private void CancelRecording() => _recordCts?.Cancel();
+
+    private Task ClearMacro()
+    {
+        Step.MacroActions.Clear();
+        return Changed();
+    }
+
+    private Task SetMacroStopKey(string v)
+    {
+        if (Enum.TryParse<MacroControlKey>(v, out var k)) Step.MacroStopKey = k;
+        return Changed();
+    }
+
+    private Task SetMacroAbortKey(string v)
+    {
+        if (Enum.TryParse<MacroControlKey>(v, out var k)) Step.MacroAbortKey = k;
+        return Changed();
+    }
+
+    private Task SetMacroCaptureMouseMoves(bool v)
+    {
+        Step.MacroCaptureMouseMoves = v;
+        return Changed();
+    }
+
+    private Task SetMacroStopOnManualMove(bool v)
+    {
+        Step.MacroStopOnManualMove = v;
+        return Changed();
+    }
+
+    private static string FormatElapsed(TimeSpan t) => t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : t.ToString(@"mm\:ss");
+}

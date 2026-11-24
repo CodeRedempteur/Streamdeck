@@ -1,0 +1,98 @@
+@inject IServiceProvider Services
+
+<div class="settings-field pathfield">
+    @if (!string.IsNullOrEmpty(Label))
+    {
+        <span class="settings-label">@Label</span>
+    }
+
+    <div class="pathfield-row">
+        <span class="settings-input">
+            <i class="@Icon"></i>
+            <input value="@Value" @oninput="OnInput" placeholder="@Placeholder" autocomplete="off" spellcheck="false" aria-label="@(Label ?? Placeholder)" />
+        </span>
+        <button type="button" class="settings-btn pathfield-btn" @onclick="BrowseAsync" disabled="@_busy" title="@(Mode == BrowseMode.Folder ? "Choisir un dossier" : "Choisir un fichier")">
+            <i class="@(_busy ? "fa-solid fa-spinner fa-spin" : "fa-solid fa-folder-open")"></i><span>Parcourir</span>
+        </button>
+        @if (Native is not null && Mode == BrowseMode.FileOrFolder)
+        {
+            <button type="button" class="settings-btn pathfield-btn" @onclick="BrowseFolderAsync" disabled="@_busy" title="Choisir un dossier">
+                <i class="fa-solid fa-folder"></i><span>Dossier</span>
+            </button>
+        }
+        @if (Native is not null)
+        {
+            <button type="button" class="settings-btn settings-btn-icon pathfield-btn" @onclick="OpenBuiltIn" title="Explorateur intégré" aria-label="Explorateur intégré">
+                <i class="fa-solid fa-sitemap"></i>
+            </button>
+        }
+    </div>
+
+    @if (_error is not null)
+    {
+        <p class="settings-hint pathfield-error"><i class="fa-solid fa-triangle-exclamation"></i> @_error</p>
+    }
+</div>
+
+<FileBrowser Open="_open" Mode="Mode" StartPath="@Value" Extensions="Extensions" OnPick="Pick" OnClose="Close" />
+
+@code {
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public string Value { get; set; } = string.Empty;
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public BrowseMode Mode { get; set; } = BrowseMode.File;
+
+    /// <summary>Extensions proposées par défaut dans le sélecteur (ex : .exe) ; l'utilisateur peut afficher tous les fichiers.</summary>
+    [Parameter] public IReadOnlyCollection<string>? Extensions { get; set; }
+
+    private bool _open;
+    private bool _busy;
+    private string? _error;
+
+    /// <summary>Fenêtre « Ouvrir » de Windows, fournie par l'hôte (absente : explorateur intégré).</summary>
+    private INativePicker? Native => Services.GetService(typeof(INativePicker)) as INativePicker;
+
+    private string Icon => Mode == BrowseMode.Folder ? "fa-solid fa-folder" : "fa-solid fa-file";
+
+    private Task OnInput(ChangeEventArgs e) => ValueChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty);
+
+    private void OpenBuiltIn() => _open = true;
+    private void Close() => _open = false;
+
+    private async Task Pick(string path)
+    {
+        _open = false;
+        _error = null;
+        await ValueChanged.InvokeAsync(path);
+    }
+
+    private Task BrowseAsync() => RunNativeAsync(folder: Mode == BrowseMode.Folder);
+    private Task BrowseFolderAsync() => RunNativeAsync(folder: true);
+
+    private async Task RunNativeAsync(bool folder)
+    {
+        _error = null;
+        var native = Native;
+
+        // Pas de sélecteur natif : explorateur intégré.
+        if (native is null) { _open = true; return; }
+
+        _busy = true;
+        try
+        {
+            var picked = folder ? await native.PickFolderAsync() : await native.PickFileAsync(Extensions);
+            if (!string.IsNullOrWhiteSpace(picked)) await ValueChanged.InvokeAsync(picked);
+        }
+        catch (Exception ex)
+        {
+            // Le sélecteur de Windows n'a pas pu s'ouvrir : on bascule sur l'explorateur intégré.
+            _error = $"Explorateur Windows indisponible ({ex.Message}) : explorateur intégré ouvert.";
+            _open = true;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

@@ -1,0 +1,44 @@
+/* TimerOverlay (v1.36) : même base plein écran que .infodisplay (voir InfoDisplayOverlay.css), mais en colonne —
+   plusieurs éléments à empiler (libellé, phase, temps, boutons) plutôt qu'un seul gros texte centré. */
+.timerdisplay {
+    flex-direction: column;
+    gap: 18px;
+    cursor: default;
+}
+
+.timerdisplay-label {
+    color: #fff;
+    font-size: clamp(18px, 3vw, 28px);
+    opacity: .85;
+    text-align: center;
+}
+
+.timerdisplay-phase {
+    color: #fff;
+    font-size: clamp(14px, 2.4vw, 20px);
+    opacity: .65;
+    text-align: center;
+}
+
+.timerdisplay-time {
+    font-size: clamp(56px, 16vw, 180px);
+}
+
+.timerdisplay-controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.timerdisplay-pending {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+.timerdisplay-start {
+    font-size: 18px;
+    padding: 10px 24px;
+}

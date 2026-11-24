@@ -1,0 +1,22 @@
+<div class="stepper">
+    <button type="button" class="stepper-btn" @onclick="Decrease" disabled="@CannotDecrease" aria-label="Moins" title="Moins">
+        <i class="fa-solid fa-minus"></i>
+    </button>
+    <span class="stepper-value">@Value</span>
+    <button type="button" class="stepper-btn" @onclick="Increase" disabled="@CannotIncrease" aria-label="Plus" title="Plus">
+        <i class="fa-solid fa-plus"></i>
+    </button>
+</div>
+
+@code {
+    [Parameter] public int Value { get; set; }
+    [Parameter] public EventCallback<int> ValueChanged { get; set; }
+    [Parameter] public int Min { get; set; } = 1;
+    [Parameter] public int Max { get; set; } = 10;
+
+    private bool CannotDecrease => Value <= Min;
+    private bool CannotIncrease => Value >= Max;
+
+    private Task Decrease() => ValueChanged.InvokeAsync(Math.Max(Min, Value - 1));
+    private Task Increase() => ValueChanged.InvokeAsync(Math.Min(Max, Value + 1));
+}

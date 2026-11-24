@@ -1,0 +1,136 @@
+@* Compose une combinaison de touches (syntaxe SendKeys) en cliquant, sans avoir à connaître ou taper {F5}, ^, %, +… *@
+
+<Modal Open="Open" Title="Clavier visuel" Icon="fa-solid fa-keyboard" OnClose="Cancel">
+    <ChildContent>
+        <div class="kp">
+            <div class="kp-preview">
+                <span class="kp-preview-label">Résultat</span>
+                <code class="kp-preview-value">@(Preview.Length == 0 ? "…" : Preview)</code>
+                @if (_combos.Count > 0)
+                {
+                    <button type="button" class="settings-btn settings-btn-icon" @onclick="RemoveLast" aria-label="Retirer la dernière touche" title="Retirer la dernière touche"><i class="fa-solid fa-delete-left"></i></button>
+                    <button type="button" class="settings-btn settings-btn-icon" @onclick="Clear" aria-label="Tout effacer" title="Tout effacer"><i class="fa-solid fa-xmark"></i></button>
+                }
+            </div>
+
+            @if (_combos.Count > 0)
+            {
+                <div class="kp-chips">
+                    @for (var i = 0; i < _combos.Count; i++)
+                    {
+                        var idx = i;
+                        <button type="button" class="kp-chip" @onclick="() => RemoveAt(idx)" title="Retirer">
+                            <span>@_combos[idx].Display</span><i class="fa-solid fa-xmark"></i>
+                        </button>
+                    }
+                </div>
+            }
+
+            <div class="kp-mods" role="group" aria-label="Touches modificatrices">
+                <button type="button" class="@ModClass(_ctrl)" @onclick="() => _ctrl = !_ctrl">Ctrl</button>
+                <button type="button" class="@ModClass(_alt)" @onclick="() => _alt = !_alt">Alt</button>
+                <button type="button" class="@ModClass(_shift)" @onclick="() => _shift = !_shift">Maj</button>
+            </div>
+            <p class="settings-hint kp-hint">Choisis d'abord les touches à maintenir (facultatif), puis la touche à appuyer avec. La touche Windows ne peut pas être envoyée par ce mécanisme.</p>
+
+            <div class="kp-row">
+                @foreach (var k in FunctionKeys) { <button type="button" class="kp-key" @onclick="() => Press(k)">@k.Label</button> }
+            </div>
+
+            <div class="kp-row">
+                @foreach (var k in EditingKeys) { <button type="button" class="kp-key kp-key-wide" @onclick="() => Press(k)">@k.Label</button> }
+            </div>
+
+            <div class="kp-row">
+                @foreach (var k in NavigationKeys) { <button type="button" class="kp-key" @onclick="() => Press(k)">@k.Label</button> }
+            </div>
+
+            <div class="kp-row kp-letters">
+                @foreach (var k in LetterKeys) { <button type="button" class="kp-key kp-key-square" @onclick="() => Press(k)">@k.Label</button> }
+            </div>
+
+            <div class="kp-row kp-letters">
+                @foreach (var k in DigitKeys) { <button type="button" class="kp-key kp-key-square" @onclick="() => Press(k)">@k.Label</button> }
+            </div>
+
+            <div class="kp-row">
+                @foreach (var k in OtherKeys) { <button type="button" class="kp-key kp-key-wide" @onclick="() => Press(k)">@k.Label</button> }
+            </div>
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <button type="button" class="settings-btn" @onclick="Cancel">Annuler</button>
+        <button type="button" class="settings-btn settings-btn-primary" @onclick="Apply" disabled="@(_combos.Count == 0)"><i class="fa-solid fa-check"></i><span>Utiliser</span></button>
+    </Footer>
+</Modal>
+
+@code {
+    private record Key(string Token, string Label);
+    private record Combo(string Value, string Display);
+
+    private static readonly IReadOnlyList<Key> FunctionKeys =
+        Enumerable.Range(1, 12).Select(n => new Key($"{{F{n}}}", $"F{n}")).ToList();
+
+    private static readonly IReadOnlyList<Key> EditingKeys = new List<Key>
+    {
+        new("{ESC}", "Échap"), new("{TAB}", "Tab"), new(" ", "Espace"),
+        new("{BACKSPACE}", "Retour arrière"), new("{DELETE}", "Suppr"), new("{ENTER}", "Entrée ⏎")
+    };
+
+    private static readonly IReadOnlyList<Key> NavigationKeys = new List<Key>
+    {
+        new("{HOME}", "Origine"), new("{END}", "Fin"), new("{PGUP}", "Page ↑"), new("{PGDN}", "Page ↓"),
+        new("{LEFT}", "←"), new("{UP}", "↑"), new("{DOWN}", "↓"), new("{RIGHT}", "→")
+    };
+
+    private static readonly IReadOnlyList<Key> LetterKeys =
+        "abcdefghijklmnopqrstuvwxyz".Select(c => new Key(c.ToString(), c.ToString().ToUpperInvariant())).ToList();
+
+    private static readonly IReadOnlyList<Key> DigitKeys =
+        "0123456789".Select(c => new Key(c.ToString(), c.ToString())).ToList();
+
+    private static readonly IReadOnlyList<Key> OtherKeys = new List<Key>
+    {
+        new("{INSERT}", "Inser"), new("{CAPSLOCK}", "Verr. maj"), new("{NUMLOCK}", "Verr. num")
+    };
+
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public EventCallback<string> OnApply { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private readonly List<Combo> _combos = new();
+    private bool _ctrl, _alt, _shift;
+    private bool _wasOpen;
+
+    private string Preview => string.Concat(_combos.Select(c => c.Value));
+
+    protected override void OnParametersSet()
+    {
+        // À chaque ouverture : on repart d'une composition vide (le champ garde l'ancienne valeur tant qu'on n'a pas validé).
+        if (Open && !_wasOpen) { _combos.Clear(); _ctrl = _alt = _shift = false; }
+        _wasOpen = Open;
+    }
+
+    private static string ModClass(bool on) => on ? "kp-mod is-on" : "kp-mod";
+
+    private void Press(Key key)
+    {
+        var value = (_ctrl ? "^" : "") + (_alt ? "%" : "") + (_shift ? "+" : "") + key.Token;
+        var display = string.Join("+", new[] { _ctrl ? "Ctrl" : null, _alt ? "Alt" : null, _shift ? "Maj" : null, key.Label }.Where(x => x is not null));
+        _combos.Add(new Combo(value, display!));
+        _ctrl = _alt = _shift = false;
+    }
+
+    private void RemoveAt(int index) => _combos.RemoveAt(index);
+    private void RemoveLast() { if (_combos.Count > 0) _combos.RemoveAt(_combos.Count - 1); }
+    private void Clear() => _combos.Clear();
+
+    private async Task Apply()
+    {
+        if (_combos.Count == 0) return;
+        await OnApply.InvokeAsync(Preview);
+    }
+
+    private Task Cancel() => OnClose.InvokeAsync();
+}

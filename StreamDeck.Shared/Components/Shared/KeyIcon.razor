@@ -1,0 +1,11 @@
+<i class="@CssClass" aria-hidden="true"></i>
+
+@code {
+    private const string Fallback = "fa-solid fa-circle-question";
+
+    /// <summary>Classes Font Awesome (ex : fa-solid fa-bolt). Toute autre valeur affiche une icône par défaut.</summary>
+    [Parameter] public string? Icon { get; set; }
+
+    private string CssClass =>
+        (Icon ?? string.Empty).StartsWith("fa-", StringComparison.Ordinal) ? Icon! : Fallback;
+}

@@ -1,0 +1,258 @@
+@* v1.34.13 : éditeur d'une liste de tâches, page plein écran (comme Editor.razor pour les scripts) plutôt qu'une
+   modale — demandé explicitement, la modale "prenait enormement de place" avec toutes les tâches développées en
+   même temps. L'identifiant de la liste en cours voyage d'une page à l'autre via TodoEditorSession (singleton,
+   même principe qu'EditorSession pour les scripts) ; le contenu reste entièrement dans BuilderConfigService —
+   contrairement aux scripts, chaque champ ici écrit directement dans la config (pas de "Enregistrer" séparé, comme
+   c'était déjà le cas dans l'ancienne modale). *@
+@page "/todo-editor"
+@inject TodoEditorSession EditorSession
+@inject BuilderConfigService Config
+@inject NavigationManager Nav
+
+@if (List is null)
+{
+    <div class="ed">
+        <p class="settings-hint">Cette liste n'existe plus.</p>
+        <button type="button" class="settings-btn" @onclick="Back"><i class="fa-solid fa-arrow-left"></i><span>Retour à mes listes</span></button>
+    </div>
+}
+else
+{
+    <div class="ed">
+        <header class="ed-bar">
+            <button type="button" class="settings-btn settings-btn-icon" @onclick="Back" aria-label="Retour" title="Retour à mes listes"><i class="fa-solid fa-arrow-left"></i></button>
+
+            <span class="settings-input ed-name">
+                <i class="fa-solid fa-list-check"></i>
+                <input value="@List.Name" @onchange='e => SetListName((string?)e.Value ?? "")' placeholder="Liste de tâches…" autocomplete="off" aria-label="Nom de la liste" />
+            </span>
+
+            <div class="ed-bar-actions">
+                <button type="button" class="settings-btn settings-btn-danger" @onclick="() => RemoveList(List)"><i class="fa-solid fa-trash"></i><span>Supprimer la liste</span></button>
+            </div>
+        </header>
+
+        <div class="ed-body is-wide">
+            <section class="ed-steps" aria-label="Tâches de la liste">
+                <div class="ed-meta">
+                    <label class="settings-field">
+                        <span class="settings-label">Dossier (facultatif)</span>
+                        <span class="settings-input settings-input-plain">
+                            <input value="@List.Folder" @onchange='e => SetListFolder((string?)e.Value ?? "")' placeholder="Perso/Courses" autocomplete="off" spellcheck="false" />
+                        </span>
+                    </label>
+                    @if (_folderError is not null)
+                    {
+                        <p class="settings-hint pathfield-error">@_folderError</p>
+                    }
+                    @if (UsageCount(List.Id) > 0)
+                    {
+                        <div class="settings-hint-row"><InfoHint>Choisie sur @UsageCount(List.Id) bloc(s) du widget — les modifications ci-dessous y sont visibles partout à la fois.</InfoHint></div>
+                    }
+                </div>
+
+                <div style="display:grid;gap:10px">
+                    @foreach (var todo in List.Items)
+                    {
+                        var expanded = _expanded.Contains(todo.Id);
+                        <div class="todolib-task @(expanded ? "" : "is-collapsed")">
+                            <div class="settings-variable-head" style="flex-wrap:wrap;gap:8px">
+                                <button type="button" class="settings-btn settings-btn-icon todolib-chevron" @onclick="() => ToggleExpanded(todo.Id)"
+                                        aria-expanded="@(expanded ? "true" : "false")" aria-label="@(expanded ? "Replier la tâche" : "Déplier la tâche")" title="@(expanded ? "Replier" : "Déplier")">
+                                    <i class="@(expanded ? "fa-solid fa-chevron-down" : "fa-solid fa-chevron-right")"></i>
+                                </button>
+                                <input type="checkbox" checked="@todo.Done" @onchange="e => SetTodoDone(todo, (bool)(e.Value ?? false))" title="Faite" />
+                                <span class="settings-input settings-input-plain" style="flex:1;min-width:140px">
+                                    <input value="@todo.Text" @onchange='e => SetTodoText(todo, (string?)e.Value ?? "")' placeholder="Tâche à faire…" autocomplete="off" />
+                                </span>
+                                @if (!expanded)
+                                {
+                                    <span class="todolib-task-summary">@TaskSummary(todo)</span>
+                                }
+                                <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveTodo(todo)" aria-label="Retirer cette tâche" title="Retirer cette tâche"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+
+                            @if (expanded)
+                            {
+                                <div class="todolib-field">
+                                    <span>Description (facultative, visible dans le détail de la tâche sur le widget)</span>
+                                    <textarea class="todolib-textarea" @onchange='e => SetTodoDescription(todo, (string?)e.Value ?? "")'>@todo.Description</textarea>
+                                </div>
+
+                                <div class="todolib-field-row">
+                                    <div class="todolib-field">
+                                        <span>Niveau</span>
+                                        <ChoiceField Items="TodoLevelChoices" Value="@(((int)todo.Level).ToString())" ValueChanged="@(v => SetTodoLevel(todo, v))" PickerIcon="fa-solid fa-flag" />
+                                    </div>
+                                    <div class="todolib-field">
+                                        <span>Échéance</span>
+                                        <DateTimeField Value="todo.DueAt" ValueChanged="@(v => SetTodoDueAt(todo, v))" Placeholder="Aucune échéance" />
+                                    </div>
+                                </div>
+
+                                @if (todo.DueAt is not null)
+                                {
+                                    <div class="todolib-field-row">
+                                        <div class="todolib-field todolib-field-narrow">
+                                            <span>Prévenir (jours avant)</span>
+                                            <NumberStepper Value="todo.NotifyDaysBefore" ValueChanged="@(v => SetTodoNotifyDaysBefore(todo, v))" Min="0" Max="30" />
+                                        </div>
+                                        <div class="todolib-field">
+                                            <span>Répétition</span>
+                                            <ChoiceField Items="TodoRepeatChoices" Value="@(((int)todo.NotifyRepeat).ToString())" ValueChanged="@(v => SetTodoNotifyRepeat(todo, v))" PickerIcon="fa-solid fa-rotate" />
+                                        </div>
+                                        <div class="todolib-field">
+                                            <span>Prévenir sur</span>
+                                            <ChoiceField Items="TodoTargetChoices" Value="@(((int)todo.NotifyTarget).ToString())" ValueChanged="@(v => SetTodoNotifyTarget(todo, v))" PickerIcon="fa-solid fa-bell" />
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    }
+                    <button type="button" class="settings-btn settings-btn-sm" @onclick="AddTodo"><i class="fa-solid fa-plus"></i><span>Ajouter une tâche</span></button>
+                </div>
+            </section>
+        </div>
+    </div>
+}
+
+@code {
+    private string? _folderError;
+
+    // v1.34.13 : état de repli purement local à l'écran (pas dans la config — inutile de le synchroniser/persister) ;
+    // repliées par défaut (gain de place demandé), une tâche nouvellement ajoutée s'ouvre automatiquement pour la
+    // remplir tout de suite.
+    private readonly HashSet<string> _expanded = new();
+
+    private TodoListInfo? List => Config.Current.TodoLists.FirstOrDefault(l => l.Id == EditorSession.ListId);
+
+    protected override void OnInitialized()
+    {
+        if (List is null) return;
+        // Une liste toute neuve (une seule tâche, vide) s'ouvre directement dépliée : rien à replier pour l'instant.
+        if (List.Items.Count == 1 && List.Items[0].Text.Length == 0) _expanded.Add(List.Items[0].Id);
+    }
+
+    private void Back() => Nav.NavigateTo("todos");
+
+    private string TaskSummary(TodoItem todo)
+    {
+        var parts = new List<string>();
+        if (todo.DueAt is { } due) parts.Add(due.ToString("dd.MM HH:mm"));
+        if (todo.Level != TodoLevel.Normal) parts.Add(todo.Level == TodoLevel.Urgent ? "Urgent" : "Important");
+        if (!string.IsNullOrWhiteSpace(todo.Description)) parts.Add("note");
+        return parts.Count == 0 ? "" : string.Join(" · ", parts);
+    }
+
+    private void ToggleExpanded(string todoId)
+    {
+        if (!_expanded.Remove(todoId)) _expanded.Add(todoId);
+    }
+
+    /// <summary>Nombre de blocs "todo" (toutes pages, tous espaces de travail) qui pointent vers cette liste.</summary>
+    private int UsageCount(string listId) =>
+        Config.Current.WidgetWorkspaces.SelectMany(w => w.Pages).SelectMany(p => p.Blocks).Count(b => b.Type == "todo" && b.TodoListId == listId);
+
+    /// <summary>Retire aussi la référence (TodoListId) de tout bloc "todo" qui la choisissait, plutôt que de la laisser pointer dans le vide.</summary>
+    private void RemoveList(TodoListInfo list)
+    {
+        Config.Update(c =>
+        {
+            c.TodoLists.RemoveAll(l => l.Id == list.Id);
+            foreach (var b in c.WidgetWorkspaces.SelectMany(w => w.Pages).SelectMany(p => p.Blocks).Where(b => b.TodoListId == list.Id))
+                b.TodoListId = null;
+        });
+        Back();
+    }
+
+    private static int FolderDepth(string folder) => string.IsNullOrWhiteSpace(folder) ? 0 : folder.Split('/', StringSplitOptions.RemoveEmptyEntries).Length;
+
+    private void SetListName(string value) => SetListField(l => l.Name = value);
+
+    private void SetListFolder(string value)
+    {
+        var trimmed = value.Trim().Trim('/');
+        if (FolderDepth(trimmed) > 3) { _folderError = "3 niveaux de dossier maximum."; return; }
+        _folderError = null;
+        SetListField(l => l.Folder = trimmed);
+    }
+
+    private void SetListField(Action<TodoListInfo> apply)
+    {
+        var id = EditorSession.ListId;
+        if (id is null) return;
+        Config.Update(c =>
+        {
+            var l = c.TodoLists.FirstOrDefault(x => x.Id == id);
+            if (l is not null) apply(l);
+        });
+    }
+
+    private void SetTodoField(TodoItem todo, Action<TodoItem> apply) =>
+        SetListField(l =>
+        {
+            var t = l.Items.FirstOrDefault(x => x.Id == todo.Id);
+            if (t is not null) apply(t);
+        });
+
+    private void SetTodoText(TodoItem todo, string value) => SetTodoField(todo, t => t.Text = value);
+    private void SetTodoDescription(TodoItem todo, string value) => SetTodoField(todo, t => t.Description = value);
+    private void SetTodoDone(TodoItem todo, bool value) => SetTodoField(todo, t => t.Done = value);
+
+    private void SetTodoDueAt(TodoItem todo, DateTime? value) =>
+        SetTodoField(todo, t => { t.DueAt = value; t.LastNotifiedForDueAt = null; });
+
+    private void SetTodoLevel(TodoItem todo, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((TodoLevel)n)) SetTodoField(todo, t => t.Level = (TodoLevel)n);
+    }
+
+    private void SetTodoNotifyDaysBefore(TodoItem todo, int value) =>
+        SetTodoField(todo, t => t.NotifyDaysBefore = Math.Clamp(value, 0, 30));
+
+    private void SetTodoNotifyRepeat(TodoItem todo, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((TodoNotifyRepeat)n)) SetTodoField(todo, t => t.NotifyRepeat = (TodoNotifyRepeat)n);
+    }
+
+    private void SetTodoNotifyTarget(TodoItem todo, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((TodoNotifyTarget)n)) SetTodoField(todo, t => t.NotifyTarget = (TodoNotifyTarget)n);
+    }
+
+    private void AddTodo()
+    {
+        var todo = new TodoItem();
+        SetListField(l => l.Items.Add(todo));
+        _expanded.Add(todo.Id);
+    }
+
+    private void RemoveTodo(TodoItem todo)
+    {
+        SetListField(l => l.Items.RemoveAll(t => t.Id == todo.Id));
+        _expanded.Remove(todo.Id);
+    }
+
+    private static readonly IReadOnlyList<ChoiceItem> TodoLevelChoices = new List<ChoiceItem>
+    {
+        new(((int)TodoLevel.Normal).ToString(), "Normal", null, "fa-solid fa-flag"),
+        new(((int)TodoLevel.Important).ToString(), "Important", null, "fa-solid fa-flag"),
+        new(((int)TodoLevel.Urgent).ToString(), "Urgent", null, "fa-solid fa-flag")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> TodoRepeatChoices = new List<ChoiceItem>
+    {
+        new(((int)TodoNotifyRepeat.None).ToString(), "Une seule fois", null, "fa-solid fa-minus"),
+        new(((int)TodoNotifyRepeat.Daily).ToString(), "Chaque jour", null, "fa-solid fa-rotate"),
+        new(((int)TodoNotifyRepeat.Weekly).ToString(), "Chaque semaine", null, "fa-solid fa-rotate"),
+        new(((int)TodoNotifyRepeat.Monthly).ToString(), "Chaque mois", null, "fa-solid fa-rotate")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> TodoTargetChoices = new List<ChoiceItem>
+    {
+        new(((int)TodoNotifyTarget.Widget).ToString(), "Widget seulement", "Mise en évidence dans le widget, pas de notification Windows", "fa-solid fa-window-restore"),
+        new(((int)TodoNotifyTarget.Windows).ToString(), "Notification Windows", "Notification système, sans mise en évidence particulière", "fa-solid fa-desktop"),
+        new(((int)TodoNotifyTarget.Both).ToString(), "Les deux", "Widget + notification Windows", "fa-solid fa-clone")
+    };
+}

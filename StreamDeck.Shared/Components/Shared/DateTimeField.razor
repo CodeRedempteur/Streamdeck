@@ -1,0 +1,42 @@
+@* Champ date/heure réutilisable (v1.34.7) : bouton affichant la valeur choisie, ouvre DateTimePickerModal — même
+   schéma que ChoiceField/ChoicePicker (bouton déclencheur + modale séparée). À utiliser partout où une échéance ou un
+   moment précis doit être choisi (tâches, courrier programmé…) plutôt qu'un <input type="datetime-local"> natif. *@
+<div class="choicefield">
+    @if (!string.IsNullOrEmpty(Label))
+    {
+        <span class="choicefield-label">@Label</span>
+    }
+
+    <button type="button" class="choicefield-btn" @onclick="Open" disabled="@Disabled">
+        <span class="choicefield-icon"><i class="fa-solid fa-calendar-days"></i></span>
+        <span class="choicefield-value">@CurrentText</span>
+        <i class="fa-solid fa-chevron-down choicefield-caret"></i>
+    </button>
+</div>
+
+<DateTimePickerModal Open="_open" Title="@(Title ?? Label ?? "Choisir une date et une heure")" Value="Value" ValueChanged="Pick" OnClose="Close" AllowClear="AllowClear" />
+
+@code {
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public DateTime? Value { get; set; }
+    [Parameter] public EventCallback<DateTime?> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool AllowClear { get; set; } = true;
+
+    /// <summary>Texte affiché quand aucune valeur n'est choisie.</summary>
+    [Parameter] public string Placeholder { get; set; } = "Aucune échéance";
+
+    private bool _open;
+
+    private string CurrentText => Value is { } v ? v.ToString("dd.MM.yyyy — HH:mm") : Placeholder;
+
+    private void Open() => _open = true;
+    private void Close() => _open = false;
+
+    private async Task Pick(DateTime? value)
+    {
+        _open = false;
+        await ValueChanged.InvokeAsync(value);
+    }
+}

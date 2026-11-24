@@ -1,0 +1,61 @@
+<Modal Open="Open" Title="@Title" Icon="@IconClass" Size="narrow" OnClose="OnCancel">
+    <ChildContent>
+    <div class="confirm">
+        <p class="confirm-message">@Message</p>
+
+        @if (NeedsPin)
+        {
+            <PinPad Message="Entre ton code PIN pour confirmer" OnSubmit="Submit" />
+        }
+        else if (Mode == ConfirmMode.Pin)
+        {
+            <p class="confirm-hint">
+                <i class="fa-solid fa-circle-info"></i>
+                <span>Aucun code PIN n'est défini (Réglages, Sécurité) : une simple confirmation est demandée.</span>
+            </p>
+        }
+    </div>
+    </ChildContent>
+
+    <Footer>
+        <button type="button" class="confirm-btn" @onclick="OnCancel">Annuler</button>
+        @if (!NeedsPin)
+        {
+            <button type="button" class="confirm-btn confirm-btn-danger" @onclick="OnConfirm">
+                <i class="fa-solid fa-check"></i><span>Confirmer</span>
+            </button>
+        }
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public string Title { get; set; } = "Confirmer";
+    [Parameter] public string Message { get; set; } = string.Empty;
+    [Parameter] public ConfirmMode Mode { get; set; } = ConfirmMode.Confirm;
+
+    /// <summary>Un code PIN est-il défini ? Sinon le mode PIN se réduit à une simple confirmation.</summary>
+    [Parameter] public bool HasPin { get; set; }
+
+    [Parameter] public Func<string, PinCheck> Verify { get; set; } = _ => new PinCheck(false, null);
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private bool NeedsPin => Mode == ConfirmMode.Pin && HasPin;
+    private string IconClass => Mode == ConfirmMode.Pin ? "fa-solid fa-lock" : "fa-solid fa-triangle-exclamation";
+
+    private PinPad.Feedback Submit(string pin)
+    {
+        var check = Verify(pin);
+
+        if (check.Ok)
+        {
+            _ = OnConfirm.InvokeAsync();
+            return new PinPad.Feedback(true);
+        }
+
+        return check.LockedFor is { } wait
+            ? new PinPad.Feedback(false, $"Trop d'essais : réessaie dans {(int)Math.Ceiling(wait.TotalSeconds)} s")
+            : new PinPad.Feedback(false, "Code incorrect");
+    }
+}

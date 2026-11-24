@@ -1,0 +1,64 @@
+@* Popup d'un bouton "Choix multiple" (ButtonKind.Picker) : montre les options, en lance une.
+   "Rester ouvert" contrôle si la popup se ferme après un choix ou reste disponible pour en relancer un autre. *@
+
+<Modal Open="Open" Title="@Title" Icon="fa-solid fa-list-ul" OnClose="Close">
+    <ChildContent>
+        @if (Options.Count > 0)
+        {
+            <button type="button" class="@(_stayOpen ? "cpop-pin is-on" : "cpop-pin")" @onclick="() => _stayOpen = !_stayOpen">
+                <i class="fa-solid fa-thumbtack"></i>
+                <span>Rester ouvert après une sélection</span>
+            </button>
+        }
+
+        @if (Options.Count == 0)
+        {
+            <p class="cpop-empty">Aucun choix configuré pour ce bouton.</p>
+        }
+        else
+        {
+            <div class="cpop-grid">
+                @foreach (var option in Options)
+                {
+                    <button type="button" class="cpop-tile" style="@TileStyle(option)" @onclick="() => Pick(option)">
+                        <span class="cpop-tile-icon">
+                            @if (!string.IsNullOrEmpty(option.ImageUrl))
+                            {
+                                <img src="@option.ImageUrl" alt="" class="cpop-tile-image" />
+                            }
+                            else
+                            {
+                                <KeyIcon Icon="@option.Icon" />
+                            }
+                        </span>
+                        <span class="cpop-tile-label">@option.Label</span>
+                    </button>
+                }
+            </div>
+        }
+    </ChildContent>
+</Modal>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public string Title { get; set; } = "Choisir";
+    [Parameter] public IReadOnlyList<ChoiceOption> Options { get; set; } = Array.Empty<ChoiceOption>();
+    [Parameter] public EventCallback<ChoiceOption> OnPick { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    /// <summary>
+    /// Reste vrai d'une ouverture à l'autre (le composant n'est pas détruit entre deux popups) : réglé une fois,
+    /// ça reste ainsi. Démarre activé — dans la plupart des cas, rester ouvert après un choix est ce qu'on veut.
+    /// </summary>
+    private bool _stayOpen = true;
+
+    private static string TileStyle(ChoiceOption o) => $"--key-bg:{o.Color};--key-fg:{ColorUtil.ContrastText(o.Color)}";
+
+    private async Task Pick(ChoiceOption o)
+    {
+        await OnPick.InvokeAsync(o);
+        if (!_stayOpen) await OnClose.InvokeAsync();
+    }
+
+    private Task Close() => OnClose.InvokeAsync();
+}

@@ -1,0 +1,936 @@
+/* Mise en page du constructeur : bibliothèque, éditeur, réglages. Les boutons, champs et cartes viennent de Settings.css (Stream Deck). */
+
+.layout { height: 100vh; overflow-y: auto; padding: 22px clamp(14px, 2.5vw, 48px) 48px; }
+
+.sb-notfound { text-align: center; padding: 80px 20px; }
+.sb-notfound h2 { margin: 0 0 18px; }
+
+/* ----- Bibliothèque ----- */
+
+.lib { max-width: 2200px; margin: 0 auto; }
+.lib-setup { max-width: 860px; margin: 0 auto; }
+
+.lib-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.lib-title { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.lib-title h1 { margin: 0; font-size: 1.35rem; font-weight: 700; }
+.lib-title p { margin: 2px 0 0; color: var(--muted); font-size: .88rem; }
+.lib-logo { width: 46px; height: 46px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 14px; color: #fff; font-size: 1.15rem; background: linear-gradient(135deg, var(--accent), #8b5cf6); }
+.lib-head-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* ----- En-tête commun aux trois pages (MainHeader.razor, v1.34.3) : plus de "lib-logo", et une vraie navigation à
+   onglets (soulignement de l'onglet actif) plutôt que trois puces reprises du sélecteur d'espaces de travail, qui
+   ressemblaient à trois boutons indépendants plutôt qu'à une navigation entre pages/sections. ----- */
+.app-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.app-header-title h1 { margin: 0; font-size: 1.3rem; font-weight: 700; }
+.app-header-title p { margin: 2px 0 0; color: var(--muted); font-size: .86rem; }
+
+.app-nav { display: flex; align-items: stretch; gap: 22px; }
+.app-nav-tab {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 2px 12px; border: none; background: transparent;
+  color: var(--muted); font: inherit; font-weight: 600; font-size: .92rem; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color .15s ease, border-color .15s ease;
+}
+.app-nav-tab i { font-size: 1rem; opacity: .85; }
+.app-nav-tab:hover { color: var(--text); }
+.app-nav-tab.is-on { color: var(--text); border-bottom-color: var(--accent); }
+.app-nav-tab.is-on i { opacity: 1; color: var(--accent); }
+
+.app-header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+@media (max-width: 720px) {
+  .app-header { padding-bottom: 10px; }
+  .app-nav { gap: 14px; width: 100%; order: 3; }
+}
+
+.lib-folder { margin: 0 0 16px; color: var(--muted); font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-setup-intro { margin: 0 0 4px; color: var(--muted); line-height: 1.55; }
+
+.lib-empty { display: grid; justify-items: center; gap: 10px; text-align: center; padding: 48px 20px; border: 1px dashed var(--line-strong); border-radius: 18px; color: var(--muted); }
+.lib-empty > i { font-size: 2.2rem; color: var(--accent); }
+.lib-empty h2 { margin: 0; color: var(--text); font-size: 1.1rem; }
+.lib-empty p { margin: 0 0 8px; max-width: 46ch; line-height: 1.55; }
+
+.lib-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.lib-items.is-cards { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
+
+.lib-card {
+  position: relative;
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+.lib-card:hover { border-color: var(--line-strong); }
+.lib-card-main { display: flex; align-items: flex-start; gap: 14px; min-width: 0; flex: 1 1 260px; }
+.lib-card-icon { width: 44px; height: 44px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 12px; background: rgba(79, 140, 255, .14); color: var(--accent); }
+.lib-card-icon.is-folder { background: rgba(251, 191, 36, .14); color: #fbbf24; }
+.lib-card-text { display: grid; gap: 5px; min-width: 0; flex: 1; text-align: left; }
+.lib-card-text strong { font-size: 1.02rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-card-meta { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; color: var(--muted); font-size: .78rem; }
+.lib-card-desc { color: var(--muted); font-size: .85rem; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lib-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.lib-card-actions .settings-btn { min-height: 40px; }
+.lib-card-actions .settings-btn-icon { width: 40px; }
+
+.lib-card-open {
+  display: flex; align-items: flex-start; gap: 14px; flex: 1 1 auto; min-width: 0; text-align: left;
+  border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0;
+}
+.lib-card-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 12px; }
+.lib-folder-card { cursor: default; }
+
+/* Carte "ajouter" en pointillés (v1.34.3, pages du widget) : une carte de plus dans la grille plutôt qu'un bouton
+   isolé sous la grille — même gabarit que les cartes normales (via .lib-items.is-cards .lib-card ci-dessous), pour
+   que son emplacement dans la mise en page soit prévisible plutôt qu'arbitraire. */
+.lib-card-add {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  border: 1.5px dashed var(--line-strong); background: transparent; color: var(--muted);
+  cursor: pointer; text-align: center; font-size: .88rem; font-weight: 600;
+}
+.lib-card-add:hover { border-color: var(--accent); color: var(--accent); background: rgba(79, 140, 255, .06); }
+.lib-card-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lib-card-add-icon {
+  width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%;
+  background: rgba(127, 127, 127, .12); font-size: 1rem;
+}
+.lib-card-add:hover .lib-card-add-icon { background: rgba(79, 140, 255, .16); }
+
+/* Poignée de glisser-déposer : seul point de départ du glissement (le reste de la carte garde son clic normal). */
+.lib-grab {
+  flex: 0 0 auto; display: grid; place-items: center; width: 26px; height: 44px; margin: -2px 0;
+  border-radius: 8px; color: var(--muted); cursor: grab; touch-action: none;
+}
+.lib-grab:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+.lib-grab:active { cursor: grabbing; }
+
+/* ----- Bibliothèque de listes de tâches (v1.34.8, TodoLists.razor, onglet « Tâches ») : rangées par dossier comme les
+   scripts, mais un gabarit de carte plus simple que .lib-card (pas de glisser-déposer, pas de description longue). */
+.todolib-folder { margin: 0 0 20px; }
+.todolib-folder-title {
+  margin: 0 0 10px; display: flex; align-items: center; gap: 8px;
+  color: var(--muted); font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+}
+.todolib-folder-title i { font-size: .85rem; opacity: .85; }
+
+.todolib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+
+.todolib-card {
+  display: flex; align-items: center; gap: 12px; text-align: left;
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  color: inherit; font: inherit; cursor: pointer;
+}
+.todolib-card:hover { border-color: var(--line-strong); }
+.todolib-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.todolib-card-icon {
+  width: 40px; height: 40px; flex: 0 0 auto; display: grid; place-items: center;
+  border-radius: 12px; background: rgba(79, 140, 255, .14); color: var(--accent);
+}
+
+.todolib-card-lines { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.todolib-card-name { font-size: .95rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todolib-card-meta { color: var(--muted); font-size: .78rem; }
+
+/* ----- Éditeur d'une tâche (v1.34.9, TodoLists.razor) : remplace le détournement de .settings-variable-bounds
+   (pensé pour une paire label+nombre étroite, pas pour empiler un label au-dessus d'un champ pleine largeur — d'où
+   les boutons "posés n'importe où" remontés). Une .todolib-field est un label au-dessus d'un champ, en colonne ;
+   .todolib-field-row aligne plusieurs champs sur une même ligne (repasse en colonne sur mobile). -----*/
+.todolib-task { padding: 14px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2, var(--bg)); display: grid; gap: 12px; }
+
+/* v1.34.13 : repli/dépli par tâche (TodoEditor.razor) — remontée comme prenant énormément de place une fois
+   plusieurs tâches ajoutées, chacune développée en entier en même temps. Repliée par défaut : ne garde visible que
+   la ligne case à cocher + texte + résumé court, comme .step-chevron/.step-title pour les actions de script. */
+.todolib-task.is-collapsed { padding-bottom: 14px; gap: 0; }
+.todolib-chevron { flex: 0 0 auto; width: 30px; height: 30px; font-size: .78rem; border: 0; background: transparent; }
+.todolib-task-summary { flex: 0 0 auto; color: var(--muted); font-size: .8rem; white-space: nowrap; }
+
+.todolib-field { display: grid; gap: 7px; min-width: 0; }
+.todolib-field > span:first-child { color: var(--muted); font-size: .82rem; font-weight: 500; }
+.todolib-field-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
+.todolib-field-row .todolib-field { flex: 1 1 200px; }
+.todolib-field-row .todolib-field-narrow { flex: 0 0 auto; }
+
+.todolib-textarea {
+  width: 100%; min-height: 60px; resize: vertical; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); font: inherit;
+}
+.todolib-textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+
+@media (max-width: 560px) {
+  .todolib-field-row { flex-direction: column; align-items: stretch; }
+}
+
+.lib-chain { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 2px; color: var(--muted); font-size: .8rem; }
+.lib-chain > i { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; background: rgba(255, 255, 255, .06); }
+
+/* Cartes : contenu en colonne, actions en bas */
+.lib-items.is-cards .lib-card { flex-direction: column; align-items: stretch; justify-content: space-between; min-height: 178px; }
+.lib-items.is-cards .lib-card-main { flex: 1 1 auto; }
+.lib-items.is-cards .lib-card-actions { padding-top: 12px; border-top: 1px solid var(--line); }
+
+/* Boutons de la barre d'actions d'une carte : plus compacts que le style de base (pensé pour des écrans tactiles) —
+   sans ça, 3-4 boutons ne tiennent pas sur une ligne et retombent en dessous, rendant les cartes inégales. */
+.lib-card-actions .settings-btn { min-height: 36px; padding: 0 12px; font-size: .84rem; gap: 7px; flex: 0 1 auto; white-space: nowrap; }
+.lib-card-actions .settings-btn.settings-btn-icon { padding: 0; width: 36px; flex: 0 0 auto; }
+
+.lib-badge { padding: 2px 9px; border-radius: 999px; background: rgba(52, 211, 153, .14); color: var(--ok); font-weight: 600; }
+.lib-badge.is-manual { background: rgba(255, 255, 255, .08); color: var(--muted); }
+.lib-badge.is-folder { background: rgba(251, 191, 36, .13); color: #fbbf24; }
+.lib-tip { margin-top: 18px; }
+
+.how-list { padding-left: 18px; line-height: 1.6; }
+
+/* ----- Éditeur ----- */
+
+.ed { max-width: 2200px; margin: 0 auto; }
+
+.ed-bar {
+  position: sticky; top: -22px; z-index: 5;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 0; margin: -22px 0 14px;
+  background: linear-gradient(180deg, var(--bg) 78%, transparent);
+}
+.ed-name { flex: 1 1 260px; min-width: 200px; }
+.ed-name input { font-weight: 600; }
+.ed-bar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.ed-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.ed-steps { display: grid; gap: 14px; min-width: 0; }
+.ed-side { position: sticky; top: 64px; display: grid; gap: 12px; min-width: 0; }
+
+.ed-empty { display: grid; justify-items: center; gap: 8px; padding: 30px 18px; text-align: center; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 16px; }
+.ed-empty > i { font-size: 1.8rem; color: var(--accent); }
+.ed-empty p { margin: 0; max-width: 44ch; line-height: 1.55; }
+
+.ed-add {
+  display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 54px;
+  border: 1px dashed var(--accent); border-radius: 16px; background: rgba(79, 140, 255, .07);
+  color: var(--accent); font: inherit; font-weight: 600; cursor: pointer;
+}
+.ed-add:hover { background: rgba(79, 140, 255, .15); }
+.ed-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 1000px) {
+  .ed-body { grid-template-columns: minmax(0, 1fr); }
+  .ed-side { position: static; }
+}
+
+.sf-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 14px; }
+.sf-candidates { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.sf-status { list-style: none; margin: 8px 0 14px; padding: 0; display: grid; gap: 7px; font-size: .88rem; }
+.sf-status li { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.sf-status .is-ok > i { color: var(--ok); }
+.sf-status .is-warn > i { color: #fbbf24; }
+.sf-status .is-err > i { color: var(--err); }
+.sf-note { color: var(--muted); font-size: .8rem; }
+
+/* ----- Outils de l'éditeur, aperçu masqué, redémarrage ----- */
+
+.ed-tools { display: flex; align-items: center; justify-content: flex-end; gap: 8px; color: var(--muted); font-size: .8rem; }
+.ed-tools > span { margin-right: auto; }
+.ed-tool { display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: .8rem; cursor: pointer; }
+.ed-tool:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, .06); }
+.ed-tool:focus-visible { outline: 2px solid var(--accent); }
+
+.ed-body.is-wide { grid-template-columns: minmax(0, 1fr) 230px; }
+
+.rs-details { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: .84rem; line-height: 1.6; }
+.pathfield-error { color: #fcd34d; }
+
+/* ----- Barre de recherche, affichage, fil d'Ariane ----- */
+
+.lib-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+/* "Nouveau dossier"/"Nouveau script" (v1.34.3) : rapatriés depuis l'en-tête commun (voir MainHeader.razor) — poussés
+   à droite de la barre d'outils de la page Scripts plutôt qu'alignés avec la recherche/le tri. */
+.lib-toolbar-page-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.lib-search { flex: 1 1 auto; min-width: 0; }
+.lib-views { display: flex; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.lib-view { width: 46px; min-height: 46px; border: 0; background: transparent; color: var(--muted); font-size: 1rem; cursor: pointer; }
+.lib-view:hover { color: var(--text); background: rgba(255, 255, 255, .05); }
+.lib-view.is-on { background: rgba(79, 140, 255, .18); color: var(--accent); }
+.lib-view:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.lib-crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 16px; font-size: .88rem; }
+.lib-crumb { display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.lib-crumb:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+.lib-crumb.is-current { color: var(--text); font-weight: 650; }
+.lib-crumb:focus-visible { outline: 2px solid var(--accent); }
+.lib-crumb-sep { color: var(--muted); font-size: .65rem; }
+.lib-crumb-current { color: var(--muted); }
+.lib-crumb-path { margin-left: auto; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .75rem; direction: rtl; }
+
+.ed-meta { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: 0 14px; align-items: start; }
+@media (max-width: 700px) { .ed-meta { grid-template-columns: minmax(0, 1fr); } }
+
+/* Variables de script ({season}, {episode}...) : les cartes elles-mêmes (.settings-variable) viennent de
+   Settings.css, partagé avec l'app Stream Deck — seul le conteneur de cette page est propre à Script Builder. */
+.ed-variables { margin: 4px 0 20px; }
+.ed-variables-undeclared { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ----- Galerie de modèles ----- */
+
+.tpl-intro { margin: 0 0 12px; }
+.tpl-search { margin-bottom: 6px; }
+.tpl-category { margin: 20px 0 10px; color: var(--muted); font-size: .8rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+
+.tpl-card {
+  display: grid; align-content: start; gap: 10px; padding: 14px 16px; text-align: left;
+  border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.tpl-card:hover { border-color: var(--accent); background: rgba(79, 140, 255, .08); }
+.tpl-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tpl-head { display: flex; align-items: center; gap: 11px; }
+.tpl-head strong { font-size: .97rem; }
+.tpl-icon { width: 38px; height: 38px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; background: rgba(79, 140, 255, .14); color: var(--accent); }
+.tpl-desc { color: var(--muted); font-size: .84rem; line-height: 1.45; }
+.tpl-chain { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tpl-step { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--text); font-size: .74rem; white-space: nowrap; }
+.tpl-step > i { color: var(--accent); font-size: .72rem; }
+.tpl-arrow { color: var(--muted); font-size: .6rem; }
+.tpl-none { color: var(--muted); font-size: .78rem; font-style: italic; }
+
+/* ----- Glisser-déposer : poignée discrète, carte qui se soulève, zones de dépose sans ambiguïté ----- */
+
+/* La poignée ne s'affiche pleinement qu'au survol de la carte : moins de bruit visuel au repos. */
+.lib-grab { opacity: .45; transition: opacity .15s ease, color .15s ease, background-color .15s ease; }
+.lib-card:hover .lib-grab, .lib-card:focus-within .lib-grab { opacity: 1; }
+
+.lib-card { transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease, opacity .15s ease; }
+.lib-card:hover { border-color: var(--line-strong); box-shadow: 0 6px 18px -10px rgba(0, 0, 0, .5); }
+
+/* La carte tenue : légèrement soulevée et penchée, comme sur une vraie pile qu'on déplace. */
+.lib-card.is-dragging { opacity: .5; transform: translateY(-2px) rotate(-.6deg); box-shadow: 0 10px 24px -8px rgba(0, 0, 0, .55); }
+.lib-card.is-dragover { box-shadow: 0 0 0 2px var(--accent) inset; }
+
+/* Dossier survolé en tenant un élément : la carte ENTIÈRE est la cible « ranger dedans » (script ou dossier, pareil). */
+.lib-folder-card.is-dragover-inside {
+  border-color: #fbbf24; background: rgba(251, 191, 36, .12);
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, .4) inset, 0 6px 18px -10px rgba(0, 0, 0, .5);
+}
+.lib-card-drop-hint {
+  flex: 0 0 auto; align-self: center; width: 30px; height: 30px; display: grid; place-items: center;
+  color: var(--muted); font-size: .85rem; opacity: .6;
+}
+.lib-folder-card.is-dragover-inside .lib-card-drop-hint { color: #fbbf24; opacity: 1; }
+
+/* Zones de bord, DANS chaque carte (position absolue : ne participent jamais à la grille, ne peuvent donc jamais la
+   casser). Gauche = se positionner avant cette carte, droite = après. N'existent que pendant un glissement actif —
+   le reste du temps, les boutons de la carte en dessous restent cliquables normalement. */
+.lib-drop-edge {
+  position: absolute; top: 0; bottom: 0; width: 15%; z-index: 4;
+  border-radius: 16px; transition: background-color .12s ease, box-shadow .12s ease;
+}
+.lib-drop-edge-left { left: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.lib-drop-edge-right { right: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.lib-drop-edge.is-on { background: rgba(79, 140, 255, .22); box-shadow: inset 3px 0 0 var(--accent); }
+.lib-drop-edge-right.is-on { box-shadow: inset -3px 0 0 var(--accent); }
+
+/* Carte de script : pas de zone « ranger dedans », les deux moitiés se partagent toute la largeur. */
+.lib-drop-edge-half { width: 50%; }
+
+/* Script ou dossier désactivé côté serveur. */
+.lib-card.is-off { opacity: .55; }
+.lib-badge.is-off { background: rgba(248, 113, 113, .14); color: var(--err); }
+.lib-crumb.is-dragover { background: rgba(79, 140, 255, .18); color: var(--text); box-shadow: 0 0 0 2px rgba(79, 140, 255, .4) inset; }
+
+.lib-version { margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--muted); font-size: .72rem; font-variant-numeric: tabular-nums; }
+
+/* La carte suit le curseur pendant le glissement (une copie, pilotée en JS — voir drag.js) : soulevée, légèrement
+   penchée, comme une vraie carte qu'on déplace. L'original reste à sa place, juste atténué, pour que la grille ne
+   bouge pas sous les pieds pendant le geste. */
+.lib-card-flying {
+  z-index: 1000; pointer-events: none;
+  transform: rotate(-1.5deg) scale(1.02);
+  box-shadow: 0 20px 44px -12px rgba(0, 0, 0, .6);
+  opacity: .96;
+}
+.lib-card-source-hidden { opacity: .3; }
+
+/* ----- Popup de personnalisation (icône + couleur) ----- */
+
+.apop-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 8px; }
+.apop-icon {
+  width: 44px; height: 44px; display: grid; place-items: center; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); cursor: pointer; font-size: 1rem;
+  transition: border-color .12s ease, color .12s ease, background .12s ease;
+}
+.apop-icon:hover { color: var(--text); border-color: var(--line-strong); }
+.apop-icon.is-active { border-color: var(--accent); background: rgba(79, 140, 255, .16); color: var(--accent); }
+
+/* ----- Zones de travail : accès rapide en onglets aux dossiers racine (visible seulement à la racine) ----- */
+
+.lib-workspaces { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 20px; }
+.lib-workspace {
+  display: inline-flex; align-items: center; gap: 9px; padding: 10px 16px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 600;
+  cursor: pointer; transition: border-color .12s ease, transform .12s ease, box-shadow .12s ease;
+}
+.lib-workspace:hover { border-color: var(--line-strong); transform: translateY(-1px); box-shadow: 0 6px 16px -8px rgba(0, 0, 0, .5); }
+.lib-workspace.is-on { border-color: var(--accent); background: rgba(79, 140, 255, .16); box-shadow: 0 0 0 1px var(--accent) inset; }
+.lib-workspace.is-dragover { border-color: var(--accent); background: rgba(79, 140, 255, .22); transform: translateY(-1px) scale(1.03); }
+.lib-workspace i { font-size: 1.05rem; }
+.lib-workspace-add { color: var(--muted); font-weight: 400; background: transparent; border-style: dashed; }
+.lib-workspace-add:hover { color: var(--text); }
+
+/* ----- Menu "plus d'actions" (regroupe les actions moins fréquentes, pour désencombrer la carte) ----- */
+
+.lib-menu { position: relative; }
+.lib-menu-backdrop { position: fixed; inset: 0; z-index: 10; background: transparent; cursor: default; }
+.lib-menu-list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 11; min-width: 210px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 6px;
+  display: grid; gap: 2px; box-shadow: 0 14px 32px -10px rgba(0, 0, 0, .55);
+}
+.lib-menu-list button {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px;
+  background: transparent; border: 0; color: var(--text); font: inherit; font-size: .88rem;
+  text-align: left; cursor: pointer; width: 100%; white-space: nowrap;
+}
+.lib-menu-list button:hover { background: rgba(255, 255, 255, .07); }
+.lib-menu-list button i { width: 16px; text-align: center; color: var(--muted); }
+.lib-menu-list button.settings-btn-danger { color: var(--err); }
+.lib-menu-list button.settings-btn-danger i { color: var(--err); }
+
+/* ----- Raccourcis clavier (Réglages) : bouton de capture ----- */
+
+.hotkey-capture.is-capturing { border-color: var(--accent, #3b82f6); color: var(--accent, #3b82f6); }
+.hotkey-capture.is-capturing .toggle-dot { background: var(--accent, #3b82f6); }
+
+/* ----- Widget de bureau (fenêtre séparée, voir Widget.razor) ----- */
+
+body.widget-body { background: #12141B; margin: 0; overflow: hidden; }
+
+.widget {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; height: 100vh; box-sizing: border-box;
+  font-family: -apple-system, "Segoe UI Variable", "Segoe UI", sans-serif; user-select: none;
+  background: #12141B; color: #E7E9EE; border: 1px solid rgba(255, 255, 255, .06);
+  transition: background .15s ease, color .15s ease;
+  /* La poignée (.widget-dragbar, ci-dessous) déborde volontairement jusqu'aux bords via une marge négative — sans
+     ça, ce débord dépassait le coin arrondi (is-rounded / verre translucide) et laissait voir un angle carré
+     "étrange" derrière l'arrondi. */
+  overflow: hidden;
+}
+.widget.is-rounded { border-radius: 16px; }
+
+/* ----- Variantes de style -----
+   --widget-solid-bg : couleur de fond OPAQUE de secours pour chaque variante, utilisée par les éléments qui doivent
+   rester lisibles par-dessus le reste du widget (ex. .widget-mail-reader ci-dessous) — la variante "glass" étant
+   volontairement translucide, "background: inherit" y donnait un fond transparent qui laissait voir/chevaucher le
+   contenu en dessous plutôt qu'un vrai popup. */
+.widget.variant-dark { background: #12141B; color: #E7E9EE; border-color: rgba(255, 255, 255, .06); --widget-solid-bg: #12141B; }
+.widget.variant-light { background: #F4F5F7; color: #1A1D24; border-color: rgba(0, 0, 0, .08); --widget-solid-bg: #F4F5F7; }
+.widget.variant-glass { background: rgba(18, 20, 27, .74); color: #E7E9EE; border-color: rgba(255, 255, 255, .14); --widget-solid-bg: #14161E; }
+.widget.variant-accent { background: linear-gradient(155deg, #171A28 0%, #21123A 100%); color: #F1EEFF; border-color: rgba(168, 124, 255, .28); --widget-solid-bg: #191C2C; }
+
+/* ----- Polices ----- */
+.widget.font-mono { font-family: "Cascadia Code", "Cascadia Mono", Consolas, monospace; }
+.widget.font-elegant { font-family: "Segoe UI Light", "Segoe UI", Georgia, serif; }
+
+/* ----- En-tête = poignée (remplace la barre de titre Windows, retirée — voir WindowsWidgetHost) -----
+   Toute cette zone est saisissable pour faire glisser le widget (voir widgetDrag.js), à l'exception des boutons
+   eux-mêmes (chaque bouton a son propre curseur "pointer" ci-dessous, qui l'exclut visuellement de la poignée). */
+.widget-header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin: -14px -16px 0; padding: 10px 12px 8px;
+  cursor: grab; touch-action: none;
+}
+.widget-header-actions { display: flex; gap: 2px; flex: none; }
+.widget-icon-btn-danger:hover { background: rgba(239, 68, 68, .25); color: #ef4444; }
+
+.widget-icon-btn {
+  position: relative; width: 26px; height: 26px; border-radius: 8px; border: none; cursor: pointer; flex: none;
+  display: flex; align-items: center; justify-content: center; background: transparent; color: inherit;
+  opacity: .6; font-size: .78rem;
+}
+.widget-icon-btn:hover { background: rgba(127, 127, 127, .16); opacity: 1; }
+.widget-icon-btn.is-active { opacity: 1; color: #7C9CFF; }
+
+.widget-clock { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.widget-time { font-size: 1.9rem; font-weight: 700; line-height: 1; letter-spacing: .02em; }
+.widget-date { font-size: .8rem; opacity: .65; }
+/* Remplace l'horloge dans l'en-tête quand elle est réglée sur "En page"/"Masquée" (Réglages) : garde les boutons
+   alignés à droite exactement comme quand l'horloge est là, plutôt que de les faire sauter à gauche. */
+.widget-header-spacer { flex: 1; }
+/* Horloge affichée comme une page du carrousel (voir Widget.razor) plutôt que fixe dans l'en-tête : centrée, plus
+   grande, puisqu'elle a alors toute la place pour elle. */
+.widget-clock-page { align-items: center; text-align: center; padding: 18px 0; }
+.widget-clock-page .widget-time { font-size: 2.6rem; }
+
+/* Page de veille (v1.34.5) : overlay par-dessus le carrousel normal (voir .widget-server, déjà position:relative)
+   plutôt qu'à sa place, pour ne jamais perturber _carouselIndex. Apparaît par une animation d'entrée (opacité) dont
+   la durée vient du réglage "Transition (ms)" (posée en ligne depuis Widget.razor) — une animation plutôt qu'une
+   transition CSS classique, plus fiable ici puisque l'élément est fraîchement inséré dans le DOM à chaque bascule. */
+.widget-idle-overlay {
+  position: absolute; inset: 0; z-index: 30; background: var(--widget-solid-bg, inherit);
+  display: flex; flex-direction: column; justify-content: center; padding: 14px; border-radius: inherit;
+  animation-name: sdbWidgetIdleFadeIn; animation-timing-function: ease-out; animation-fill-mode: both;
+}
+@keyframes sdbWidgetIdleFadeIn { from { opacity: 0; } to { opacity: 1; } }
+.widget-idle-mail { display: flex; flex-direction: column; gap: 2px; }
+
+/* Bloc "weather" (v1.34.5) : icône Font Awesome (voir WeatherService.Describe) + température/description/région. */
+.widget-weather-main { display: flex; align-items: center; gap: 14px; padding: 10px 4px; }
+.widget-weather-icon { font-size: 2.2rem; opacity: .9; flex: none; }
+.widget-weather-lines { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.widget-weather-temp { font-size: 1.7rem; font-weight: 700; line-height: 1.1; }
+.widget-weather-desc { font-size: .85rem; opacity: .75; }
+.widget-weather-place { font-size: .78rem; opacity: .55; }
+
+/* Bloc "worldclock" (v1.34.5) : "vue de la planète" volontairement simple, une icône de globe plutôt qu'un repère
+   positionné avec précision (voir la remarque dans Widget.razor, WorldClockTimeFor). */
+.widget-worldclock-globe {
+  width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  flex: none; font-size: 1.5rem; background: rgba(124, 156, 255, .14); color: #7C9CFF;
+}
+.widget-worldclock-lines { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.widget-worldclock-time { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+.widget-worldclock-label { font-size: .82rem; opacity: .7; }
+.widget-worldclock { display: flex; align-items: center; gap: 12px; padding: 10px 4px; }
+
+/* Bloc "todo" (v1.34.6, détails/couleur/rappels en v1.34.7) : case à cocher cliquable (icône seule, voir
+   Widget.razor/ToggleTodo) — cliquer sur le TEXTE ouvre les détails plutôt que de cocher (voir OpenTodoDetail). Une
+   tâche faite reste affichée (barrée/atténuée). Trois indications de couleur, cumulables par priorité d'affichage
+   (l'échéance dépassée l'emporte sur tout le reste) : .is-overdue (rouge, échéance dépassée pas encore faite),
+   .is-upcoming (orange, rappel déjà envoyé mais échéance pas encore dépassée), .level-important/.level-urgent
+   (liseré de gauche, indépendant de l'échéance — juste le niveau choisi pour la tâche). */
+.widget-todo { display: flex; flex-direction: column; gap: 2px; padding: 4px; }
+.widget-todo-item { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-radius: 6px; border-left: 3px solid transparent; }
+.widget-todo-item:hover { background: rgba(255, 255, 255, .05); }
+.widget-todo-item i { font-size: 1.05rem; opacity: .8; flex: none; }
+.widget-todo-check, .widget-todo-info { cursor: pointer; }
+.widget-todo-lines { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; cursor: pointer; }
+.widget-todo-text { font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.widget-todo-due { font-size: .75rem; opacity: .6; }
+.widget-todo-item.is-done { opacity: .5; }
+.widget-todo-item.is-done .widget-todo-text { text-decoration: line-through; }
+.widget-todo-item.level-important { border-left-color: #f59e0b; }
+.widget-todo-item.level-urgent { border-left-color: #ef4444; }
+.widget-todo-item.is-upcoming .widget-todo-due, .widget-todo-item.is-upcoming .widget-todo-text { color: #f59e0b; }
+.widget-todo-item.is-overdue .widget-todo-due, .widget-todo-item.is-overdue .widget-todo-text { color: #ef4444; }
+
+.widget-todo-detail { display: flex; flex-direction: column; gap: 10px; padding: 4px 6px 6px; }
+.widget-todo-detail-text { font-size: 1.05rem; font-weight: 600; margin: 0; }
+.widget-todo-detail-text.is-done { text-decoration: line-through; opacity: .6; }
+.widget-todo-detail-desc { margin: 0; white-space: pre-wrap; opacity: .85; }
+
+/* v1.34.12 : le détail de tâche n'utilise plus <Modal> (voir Widget.razor) — sa propre petite "tête" (titre + bouton
+   fermer), même esprit que .modal-head mais en CSS propre au widget plutôt que d'hériter du composant partagé. */
+.widget-todo-detail-popup { width: min(320px, calc(100vw - 32px)); padding: 10px; gap: 8px; }
+.widget-todo-detail-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, .14); font-weight: 650; font-size: .95rem;
+}
+.widget-todo-detail-head span { display: flex; align-items: center; gap: 8px; }
+.widget-todo-detail-head i.fa-list-check { color: #7C9CFF; }
+
+/* v1.34.10, correctif (le correctif v1.34.9 ci-dessous n'a pas suffi, remonté avec capture d'écran — modale toujours
+   transparente) : --widget-solid-bg est en fait ÉGALE au fond du widget lui-même pour 3 variantes sur 4 (dark/light/
+   custom, voir plus haut) — elle n'apportait donc AUCUN contraste avec le contenu affiché derrière la modale dans ces
+   cas, seulement pour "glass"/"accent". Remplacée ici par une couleur FIXE, indépendante de la variante/du thème
+   personnalisé, comme le fait déjà .modal-card hors du widget (--surface/--text, eux-mêmes fixes dans app.css) —
+   garantit un contraste net quelle que soit la variante choisie. Couleur + texte posés ensemble (la modale ne doit
+   plus dépendre du "color: inherit" venant du widget).
+   v1.34.11, correctif : toujours remonté comme transparent pour le détail de tâche précisément (mais pas pour le
+   sélecteur d'espace / les notifications, qui partagent presque le même mécanisme) — cette fois pour DEUX raisons
+   cumulées : 1) le positionnement, voir Widget.razor (la modale vivait dans .widget-server, sortie de là maintenant,
+   cause la plus probable du mauvais RECOUVREMENT) ; 2) même une fois bien positionnée, le dégradé choisi en v1.34.10
+   (#1c1f2c → #14161f, un bleu-nuit sombre) reste visuellement TRÈS proche des thèmes "accent"/"custom" sombres
+   (eux-mêmes bleu-nuit/violet sombre, voir .widget.variant-accent plus haut) — peu de contraste même une fois
+   positionné correctement. Bordure nette en couleur d'accent (au lieu d'un simple liseré blanc translucide) ajoutée
+   ici pour qu'elle se détache visuellement MÊME si le fond reste proche en teinte. */
+.widget .modal-backdrop { background: rgba(0, 0, 0, .68); }
+.widget .modal-card {
+  background: linear-gradient(180deg, #232838, #171a24);
+  color: #EDEFF5;
+  border: 2px solid rgba(124, 156, 255, .55);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, .75), 0 0 0 1px rgba(0, 0, 0, .3);
+}
+.widget .modal-card .modal-close { color: #9aa2b8; }
+.widget .modal-card .modal-close:hover { color: #EDEFF5; border-color: rgba(255, 255, 255, .3); }
+.widget .modal-card .modal-title-icon { color: #7C9CFF; }
+
+/* flex:1 + min-height:0 : dans une taille "compacte" (peu de hauteur), le contenu peut être plus grand que ce qui
+   tient dans la fenêtre — ça défile alors ici plutôt que d'être invisible, coupé net par le bord de la fenêtre (rien
+   ne le redimensionne).
+   v1.34.10, correctif : "container-type: inline-size" vivait ICI avant (pour les touches épinglées, voir
+   .widget-pins plus bas) — or la spec CSS Containment fait de tout élément avec un container-type non "normal" un
+   nouveau "containing block" pour ses descendants en position:fixed/absolute. Toute <Modal> ou bulle (filtre
+   courrier, détail de tâche…) ouverte depuis une page DANS .widget-server se retrouvait donc confinée à la boîte de
+   .widget-server (qui exclut l'en-tête) au lieu de couvrir toute la fenêtre du widget — d'où les modales mal
+   positionnées/recouvertes remontées ("toujours transparente", "tout buggé en veille"). Déplacé sur .widget-pins
+   (seul élément qui en a réellement besoin) : la taille des tuiles épinglées reste responsive, sans plus rien
+   confiner ici. */
+.widget-server { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; flex: 1; min-height: 0; overflow-y: auto; position: relative; }
+.widget-status { display: flex; align-items: center; gap: 8px; font-size: .85rem; }
+.widget-dot { width: 9px; height: 9px; border-radius: 50%; background: #6b7280; flex: none; }
+.widget-dot.is-on { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+.widget-dot.is-off { background: #ef4444; }
+
+/* ----- Bouton rapide marche/arrêt serveur, barre du haut (v1.34.15) ----- */
+.widget-server-quick-btn.is-on { color: #22c55e; }
+.widget-server-quick-btn.is-off { color: #ef4444; }
+.widget-hint { font-size: .8rem; opacity: .65; margin: 0; }
+
+.widget-server-controls { display: flex; flex-direction: column; gap: 8px; }
+.widget-actions { display: flex; gap: 8px; }
+.widget-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; height: 34px; border-radius: 8px;
+  border: 1px solid rgba(127, 127, 127, .22); background: rgba(127, 127, 127, .08); color: inherit;
+  cursor: pointer; font-size: .95rem;
+}
+.widget-btn:hover:not(:disabled) { background: rgba(127, 127, 127, .18); }
+.widget-btn:disabled { opacity: .5; cursor: default; }
+
+/* Le contenu variable (contrôles serveur "en page", courrier, ou touches épinglées) prend le reste de la place
+   disponible sous les contrôles serveur "fixes" éventuels, sans pousser .widget-pages hors de vue. */
+.widget-carousel { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+
+/* Touches épinglées : mêmes tuiles (KeyTile) que l'application Stream Deck, pour que ça se ressemble vraiment.
+   --cols posé en ligne depuis Widget.razor (réglage "Colonnes") ; la taille de chaque tuile (--size, lu par
+   KeyTile.css) se calcule à partir de la largeur RÉELLE du conteneur (100cqw) plutôt que d'être fixée en dur — évite
+   qu'un nombre de colonnes élevé ou un widget étroit (redimensionnement libre) ne fasse déborder la grille et
+   n'oblige à défiler pour la voir en entier.
+   v1.34.10 : container-type posé ICI directement (déplacé depuis .widget-server, voir le correctif juste au-dessus)
+   plutôt que sur tout .widget-server — 100cqw se base maintenant sur la largeur de cette grille elle-même, toujours
+   correcte, sans plus transformer .widget-server en containing block pour les modales/bulles en position:fixed. */
+.widget-pins {
+  display: grid; grid-template-columns: repeat(var(--cols, 4), 1fr); gap: 8px; margin-top: 2px;
+  container-type: inline-size;
+  --size: clamp(34px, calc((100cqw - (var(--cols, 4) - 1) * 8px) / var(--cols, 4)), 84px);
+}
+.widget-pin-slot { aspect-ratio: 1; }
+
+/* Pages (horloge/contrôles serveur "en page", courrier, touches), comme sur l'appli mobile : flèches + points.
+   TOUJOURS en dehors de la zone qui défile (.widget-server) — sinon, ils ne restaient visibles que si on avait déjà
+   scrollé jusqu'en bas, alors qu'ils doivent permettre de naviguer en permanence. */
+.widget-pages { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 2px; flex: none; }
+.widget-page-dots { display: flex; align-items: center; gap: 6px; }
+.widget-page-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .3; cursor: pointer; }
+.widget-page-dot.is-active { opacity: 1; }
+
+/* Touche "image seule" : plus de fond/dégradé/ombre de la tuile — juste l'image, bord à bord, coins arrondis. */
+.pin-imageonly .keytile,
+.pin-imageonly .keytile-static {
+  padding: 0;
+  gap: 0;
+  background: none;
+  box-shadow: none;
+  overflow: hidden;
+}
+.pin-imageonly .keytile-icon { width: 100%; height: 100%; flex: 1; filter: none; }
+.pin-imageonly .keytile-image { width: 100%; height: 100%; border-radius: inherit; box-shadow: none; }
+
+/* Courrier du jour (page du carrousel, voir Widget.razor/MailFetchService) : liste compacte, texte tronqué plutôt
+   que de faire déborder la ligne (l'expéditeur/l'objet peuvent être longs). Cliquable (voir Widget.razor OpenMail) :
+   pointeur "main" et léger effet au survol pour que ce soit visible, en plus de l'avatar/pastille non-lu. */
+.widget-mail { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+/* L'en-tête (titre + boutons + popup filtre) ne défile plus avec les messages (v1.34.3, correctif) : c'est
+   .widget-mail-list ci-dessous qui porte maintenant le défilement, pour que le popup du filtre — positionné en absolu
+   par rapport à .widget-mail-head-actions, donc ancré ici — ne soit plus jamais rogné par un ancêtre en overflow. */
+.widget-mail-head { display: flex; align-items: center; justify-content: space-between; font-size: .8rem; opacity: .75; margin-bottom: 2px; flex: none; position: relative; z-index: 6; }
+.widget-mail-head-actions { display: flex; align-items: center; gap: 4px; flex: none; position: relative; }
+.widget-mail-list { display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow-y: auto; flex: 1; }
+
+/* Menu du filtre (v1.34.3, bouton "entonnoir" à côté d'Actualiser) : centré comme les autres bulles du widget (voir
+   .widget-workspace-popup ci-dessus), plus seulement ses propres dimensions ici. */
+.widget-mail-filter-popup { min-width: 170px; max-width: min(220px, calc(100vw - 32px)); }
+.widget-mail-filter-sep { height: 1px; background: rgba(127, 127, 127, .2); margin: 3px 4px; }
+.widget-mail-item {
+  display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px; border-radius: 8px;
+  background: rgba(127, 127, 127, .08); cursor: pointer; transition: background .1s ease;
+}
+.widget-mail-item:hover { background: rgba(127, 127, 127, .18); }
+.widget-mail-item.is-unread { background: rgba(124, 156, 255, .16); }
+.widget-mail-item.is-unread:hover { background: rgba(124, 156, 255, .24); }
+.widget-mail-item.is-unread .widget-mail-from { font-weight: 700; }
+/* Petit rond avec l'initiale de l'expéditeur — repère visuel rapide plutôt qu'une liste de texte uniforme. */
+.widget-mail-avatar {
+  flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: .75rem; font-weight: 700; background: rgba(124, 156, 255, .28); color: inherit; margin-top: 1px;
+}
+.widget-mail-lines { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.widget-mail-row { display: flex; align-items: baseline; gap: 6px; }
+.widget-mail-from { flex: 1; font-size: .78rem; opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.widget-mail-time { flex: none; font-size: .68rem; opacity: .55; }
+.widget-mail-subject { font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.widget-mail-error { font-size: .78rem; color: #f59e0b; margin: 0; }
+
+/* Lecteur de message complet (voir Widget.razor OpenMail/FetchBodyAsync) : recouvre la zone défilante (.widget-server,
+   positionnée en relative ci-dessus) sans cacher l'en-tête (heure/boutons fermer/réduire), qui reste utilisable
+   pendant la lecture. */
+.widget-mail-reader {
+  /* z-index (v1.34.6, correctif) : était à 5, plus BAS que .widget-mail-head (z-index:6, pour que son popup de
+     filtre reste par-dessus la liste de courrier qui défile sous elle) — l'en-tête de la boîte mail (nom, boutons
+     éditer/filtrer/actualiser) restait donc visible PAR-DESSUS ce lecteur/cette composition au lieu d'être masqué,
+     puisque les deux sont dans le même contexte d'empilement (.widget-server, position:relative). Relevé au-dessus
+     de tout le contenu normal du widget (mais sous les bulles/popups, voir .widget-popup-backdrop plus bas). */
+  position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; gap: 8px;
+  background: var(--widget-solid-bg, #12141B); padding: 10px 2px 2px; border-radius: inherit;
+}
+.widget-mail-reader-head { display: flex; align-items: flex-start; gap: 8px; }
+.widget-mail-reader-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.widget-mail-reader-subject { font-size: .92rem; font-weight: 700; }
+.widget-mail-reader-from { font-size: .75rem; opacity: .65; }
+.widget-mail-reader-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.widget-mail-reader-text { font-size: .82rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; margin: 0; }
+
+/* Actions sous la vue "Détails" (v1.33.0) : ouvrent les deux autres écrans (Mise en forme / Répondre) plutôt que
+   d'empiler leur contenu directement ici. */
+.widget-mail-reader-actions { display: flex; gap: 8px; flex: none; }
+
+/* Vue "Mise en forme" : citations (">"/">>"/">>>"…) repliées par défaut via <details>/<summary> natifs — pas besoin
+   d'état C# supplémentaire pour ouvrir/fermer chaque bloc. */
+.widget-mail-quote { border-radius: 8px; background: rgba(127, 127, 127, .08); padding: 2px 8px; }
+.widget-mail-quote summary { cursor: pointer; font-size: .75rem; opacity: .65; padding: 6px 0; list-style: none; }
+.widget-mail-quote summary::-webkit-details-marker { display: none; }
+.widget-mail-quote summary::before { content: "▸ "; }
+.widget-mail-quote[open] summary::before { content: "▾ "; }
+.widget-mail-quote-text { opacity: .8; border-left: 2px solid rgba(127, 127, 127, .3); padding: 0 0 8px 10px; margin: 0 !important; }
+
+/* Actions en ligne (favori/supprimer) directement sur chaque message de la liste, sans avoir à l'ouvrir. */
+.widget-mail-item-actions { display: flex; gap: 2px; flex: none; align-self: center; }
+.widget-mail-item-actions .widget-icon-btn { width: 22px; height: 22px; font-size: .7rem; }
+
+/* Répondre à un message ouvert en grand (SMTP, voir MailFetchService.SendReplyAsync) : zone dépliée sous le corps du
+   message, seulement si l'envoi est configuré pour la boîte concernée (Réglages > Courrier). */
+.widget-mail-reply { flex: none; display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px dashed rgba(127, 127, 127, .25); }
+.widget-reply-textarea {
+  width: 100%; min-height: 64px; resize: vertical; border-radius: 8px; padding: 8px;
+  border: 1px solid rgba(127, 127, 127, .22); background: rgba(127, 127, 127, .08); color: inherit;
+  font-family: inherit; font-size: .82rem; box-sizing: border-box;
+}
+
+/* Champs "À" / "Sujet" / choix du compte d'un nouveau message (v1.34.1) : mêmes lignes que la zone de réponse
+   ci-dessus, en version "champ simple" (une ligne) plutôt qu'une zone de texte. */
+.widget-compose-field {
+  width: 100%; height: 32px; border-radius: 8px; padding: 0 8px;
+  border: 1px solid rgba(127, 127, 127, .22); background: rgba(127, 127, 127, .08); color: inherit;
+  font-family: inherit; font-size: .82rem; box-sizing: border-box;
+}
+
+.widget-message { font-size: .75rem; opacity: .65; margin: 0; }
+
+/* Barre de défilement discrète dans le widget (Chromium/WebView2) — la barre par défaut est large et voyante dans
+   une aussi petite fenêtre. Purement CSS, sans risque contrairement aux correctifs natifs de fenêtre. */
+.widget-server::-webkit-scrollbar,
+.widget-mail-list::-webkit-scrollbar,
+.widget-mail-reader-body::-webkit-scrollbar {
+  width: 5px;
+}
+.widget-server::-webkit-scrollbar-track,
+.widget-mail-list::-webkit-scrollbar-track,
+.widget-mail-reader-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.widget-server::-webkit-scrollbar-thumb,
+.widget-mail-list::-webkit-scrollbar-thumb,
+.widget-mail-reader-body::-webkit-scrollbar-thumb {
+  background: rgba(127, 127, 127, .35); border-radius: 4px;
+}
+.widget-server::-webkit-scrollbar-thumb:hover,
+.widget-mail-list::-webkit-scrollbar-thumb:hover,
+.widget-mail-reader-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(127, 127, 127, .55);
+}
+
+/* ----- Sélecteur d'espace de travail, notifications, filtre courrier (voir Widget.razor) -----
+   Toutes les bulles du widget (.widget-workspace-popup, et ses variantes .widget-notif-popup/.widget-mail-filter-popup)
+   partagent ce même positionnement (v1.34.5, correctif) : auparavant chacune était ancrée en absolu à côté de son
+   bouton déclencheur (à gauche, à droite…), ce qui pouvait la faire déborder hors de la fenêtre du widget — étroite —
+   et provoquait une barre de défilement horizontale (remonté avec capture d'écran). "position: fixed" + centrage
+   ici est relatif à la fenêtre du widget elle-même (une fenêtre WebView2 autonome, donc 100vw/100vh = sa propre
+   taille, pas l'écran), jamais à un ancêtre défilant, donc aucun risque de débordement ni de troncature. Un fond semi-
+   transparent (.widget-popup-backdrop, ajouté juste avant chaque bulle dans Widget.razor) referme la bulle au clic en
+   dehors, comme un vrai popup/modale plutôt qu'un menu ancré. */
+.widget-workspace-switch { position: relative; }
+.widget-popup-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .55); }
+/* v1.34.9, correctif : fond quasi-opaque (rgba(20,22,30,.96)) déjà, mais beaucoup trop proche des couleurs du widget
+   lui-même (#12141B et variantes) pour vraiment se détacher — remonté comme "transparent"/peu lisible, notamment le
+   filtre courrier (.widget-mail-filter-popup) et les notifications (.widget-notif-popup).
+   v1.34.10, correctif : --widget-solid-bg (tenté en v1.34.9) est en fait ÉGALE au fond du widget pour 3 variantes sur
+   4 (voir plus haut, et la remarque sur .modal-card) — toujours insuffisant, remonté à nouveau ("barres noires"
+   peu lisibles sous la cloche de notifications). Couleur FIXE ici aussi, + couleur de texte posée explicitement
+   (au lieu de "color: inherit" qui dépendait du widget) pour un contraste garanti quelle que soit la variante.
+   v1.34.11, correctif : le sélecteur d'espace et les notifications étaient effectivement corrigés, mais PAS le
+   filtre courrier (même classe pourtant) — cause : cette bulle-là vivait encore dans .widget-server au moment de la
+   capture d'écran (voir Widget.razor, sortie de là maintenant, comme le détail de tâche). Bordure nette en couleur
+   d'accent ajoutée en plus (au lieu d'un simple liseré blanc translucide), même raisonnement que .modal-card : se
+   détacher visuellement même si le fond reste proche en teinte d'un thème sombre/"accent". */
+.widget-workspace-popup {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); margin: 0; z-index: 41; min-width: 140px;
+  max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow-y: auto;
+  background: linear-gradient(180deg, #232838, #171a24); color: #EDEFF5;
+  border: 2px solid rgba(124, 156, 255, .55); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .65), 0 0 0 1px rgba(0, 0, 0, .3); padding: 4px; display: flex; flex-direction: column; gap: 2px;
+}
+.widget-workspace-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; border: none;
+  background: transparent; color: inherit; cursor: pointer; font-size: .8rem; text-align: left; opacity: .75;
+  flex: 1; min-width: 0;
+}
+.widget-workspace-item:hover { background: rgba(127, 127, 127, .16); opacity: 1; }
+.widget-workspace-item.is-active { opacity: 1; color: #7C9CFF; }
+
+
+/* ----- Zone de notifications (envois programmés en échec, v1.34.1, voir Widget.razor CheckScheduledEmails) ----- */
+.widget-notif-badge {
+  position: absolute; top: -2px; right: -2px; min-width: 15px; height: 15px; border-radius: 8px;
+  background: #ef4444; color: #fff; font-size: .62rem; line-height: 15px; text-align: center; padding: 0 3px;
+}
+.widget-notif-popup { min-width: 200px; max-width: min(260px, calc(100vw - 32px)); overflow-x: hidden; }
+.widget-notif-item {
+  display: flex; gap: 6px; padding: 6px 8px; border-radius: 7px; align-items: flex-start;
+  border-bottom: 1px solid rgba(127, 127, 127, .14);
+}
+.widget-notif-item:last-child { border-bottom: none; }
+.widget-notif-item-lines { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.widget-notif-item-subject { font-size: .8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.widget-notif-item-meta { font-size: .68rem; opacity: .6; word-break: break-word; }
+.widget-notif-item-error { font-size: .68rem; color: #f59e0b; word-break: break-word; }
+.widget-notif-item-actions { display: flex; flex-direction: column; gap: 2px; flex: none; }
+.widget-notif-item-actions .widget-icon-btn { width: 22px; height: 22px; font-size: .7rem; }
+
+/* ----- Onglets Actives/Historique (v1.34.15) ----- */
+.widget-notif-tabs { display: flex; gap: 4px; margin-bottom: 6px; }
+.widget-notif-tab {
+  flex: 1; padding: 5px 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted, #9aa0ac);
+  font-size: .74rem; font-weight: 600; cursor: pointer;
+}
+.widget-notif-tab.is-active { background: rgba(124, 156, 255, .16); color: #fff; }
+.widget-notif-item-history { opacity: .85; }
+.widget-notif-history-clear { width: 100%; justify-content: center; margin-top: 6px; }
+
+/* ----- Programmer l'envoi (composition, v1.34.1) ----- */
+.widget-compose-schedule-toggle { display: flex; align-items: center; gap: 6px; font-size: .8rem; opacity: .85; cursor: pointer; }
+
+/* ----- Pièces jointes (v1.34.5, composition et réponse) : une puce par fichier, avec son poids et un bouton pour la retirer. ----- */
+.widget-compose-attachments { display: flex; flex-wrap: wrap; gap: 6px; }
+.widget-compose-attachment-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 6px 4px 8px; border-radius: 8px;
+  background: rgba(127, 127, 127, .12); font-size: .76rem;
+}
+.widget-compose-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.widget-compose-attachment-size { opacity: .6; flex: none; }
+.widget-compose-attachment-chip button {
+  flex: none; border: none; background: transparent; color: inherit; opacity: .6; cursor: pointer;
+  width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; padding: 0;
+}
+.widget-compose-attachment-chip button:hover { opacity: 1; background: rgba(239, 68, 68, .2); color: #ef4444; }
+
+/* ----- Réglages : espaces de travail / pages du widget -----
+   Depuis v1.32.0, chaque page compose librement son contenu (horloge + contrôles serveur + courrier + touches, au
+   choix) plutôt qu'un seul type par page — présenté comme une carte avec un interrupteur par type de contenu plutôt
+   qu'une simple ligne, pour que ce soit visible d'un coup d'œil. */
+.settings-page-order-label { flex: 1; display: flex; align-items: center; gap: 8px; font-size: .9rem; font-weight: 600; }
+.settings-workspace { display: flex; flex-direction: column; gap: 8px; }
+.settings-page-card {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; margin-top: 8px;
+  border: 1px solid var(--line); border-radius: 10px; background: rgba(127, 127, 127, .05);
+}
+.settings-page-card-head { display: flex; align-items: center; gap: 6px; }
+.settings-page-toggles { display: flex; flex-direction: column; gap: 4px; }
+.settings-page-toggle-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 0; border-top: 1px dashed var(--line); }
+.settings-page-toggle-row:first-child { border-top: none; }
+.settings-page-block-label { flex: 1; display: flex; align-items: center; gap: 6px; font-size: .85rem; opacity: .85; }
+.settings-page-add-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.settings-page-add-row { position: relative; margin-top: 4px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.settings-page-add-menu {
+  position: absolute; top: 100%; left: 0; z-index: 10; margin-top: 4px; display: flex; flex-direction: column; gap: 2px;
+  padding: 4px; min-width: 200px; background: var(--surface, #1a1c26); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+.settings-page-add-menu .settings-btn-sm { justify-content: flex-start; }
+.settings-btn-sm { min-height: 34px; padding: 0 12px; font-size: .82rem; gap: 8px; }
+.settings-subrow { display: flex; align-items: center; gap: 6px; margin-top: -4px; margin-bottom: 4px; padding-left: 2px; }
+/* Card d'une page cliquable pour la déplier (v1.33.0) : curseur main sur toute la tête, sauf les boutons/le champ nom
+   (arrêtent la propagation du clic en Razor via @@onclick:stopPropagation, voir Settings.razor). */
+.settings-page-card-head { cursor: pointer; }
+
+/* ----- Réglages : comptes de courrier (cartes repliables, IMAP/SMTP) ----- */
+.settings-mail-account { border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; overflow: hidden; }
+.settings-mail-account-head {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: none;
+  background: rgba(127, 127, 127, .05); color: inherit; cursor: pointer; font-size: .88rem; text-align: left;
+}
+.settings-mail-account-head:hover { background: rgba(127, 127, 127, .1); }
+.settings-mail-chevron { flex: none; opacity: .55; font-size: .7rem; }
+.settings-mail-account-name { flex: 1; font-weight: 600; }
+.settings-mail-badge {
+  flex: none; font-size: .68rem; padding: 2px 7px; border-radius: 999px; background: rgba(127, 127, 127, .18); opacity: .8;
+}
+.settings-mail-badge.is-accent { background: rgba(124, 156, 255, .22); color: #7C9CFF; opacity: 1; display: flex; align-items: center; gap: 4px; }
+.settings-mail-account-body { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 12px; }
+.settings-mail-subhead {
+  display: flex; align-items: center; gap: 6px; font-size: .78rem; font-weight: 700; opacity: .65;
+  margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line);
+}
+.settings-mail-subhead:first-child { margin-top: 2px; padding-top: 0; border-top: none; }
+
+/* ----- Signature d'une boîte mail (v1.34.5) : logo + coordonnées, voir Settings.razor et MailFetchService.BuildSignatureHtml. ----- */
+.settings-signature-logo-preview { max-height: 60px; max-width: 220px; margin: 4px 0 2px; border-radius: 6px; background: rgba(255, 255, 255, .06); padding: 6px; object-fit: contain; }
+.settings-signature-text {
+  width: 100%; resize: vertical; border-radius: 10px; padding: 8px 10px; margin-top: 6px;
+  border: 1px solid var(--line); background: var(--surface); color: inherit; font: inherit; font-size: .84rem; box-sizing: border-box;
+}
+
+/* ----- Onglet « Téléphone » (v1.34.16) : modèles de configuration téléphone composés sur le PC, voir
+   PhoneTemplates.razor. ----- */
+.phone-tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.phone-tpl-card { flex-direction: column; align-items: stretch; gap: 10px; }
+.phone-tpl-name, .phone-tpl-editor-name {
+  border: none; background: transparent; color: inherit; font: inherit; font-size: 1.02rem; font-weight: 600;
+  padding: 2px 0; width: 100%; min-width: 0;
+}
+.phone-tpl-name:hover, .phone-tpl-name:focus, .phone-tpl-editor-name:hover, .phone-tpl-editor-name:focus {
+  background: rgba(127, 127, 127, .08); border-radius: 6px; padding-left: 6px;
+}
+.phone-tpl-editor-head { align-items: center; gap: 10px; }
+.phone-tpl-editor-name { flex: 1; font-size: 1.15rem; }
+
+/* ----- Calendrier visuel mensuel (v1.37, revu v1.37.2) : grille du mois, navigable mois/année — Calendar.razor.
+   Les anciennes "routines de la semaine"/"tâches fréquentes" en zones séparées ont été retirées (fusionnées en
+   CalendarEntry, visibles directement sur la case du jour et éditées depuis sa modale). ----- */
+
+.cal-month-head { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.cal-month-nav { display: flex; gap: 4px; }
+.cal-month-title { min-width: 180px; text-align: center; font-size: 1.1rem; font-weight: 700; }
+
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal-grid-dow { text-align: center; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; color: var(--muted); padding-bottom: 4px; }
+
+.cal-cell {
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px; justify-content: flex-start; text-align: left; position: relative;
+  min-height: 92px; padding: 6px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-2, var(--bg)); color: inherit; font: inherit; cursor: pointer;
+}
+.cal-cell:hover { border-color: var(--line-strong); background: rgba(127, 127, 127, .1); }
+.cal-cell.is-outside { opacity: .4; }
+.cal-cell.is-today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cal-cell-num { font-size: .85rem; font-weight: 600; }
+.cal-cell-badge { position: absolute; top: 6px; right: 6px; font-size: .68rem; color: var(--accent); }
+
+.cal-cell-entries { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.cal-cell-entry {
+  font-size: .68rem; font-weight: 600; padding: 1px 5px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-left: 3px solid var(--cal-chip-color, var(--accent)); background: rgba(127, 127, 127, .12);
+}
+.cal-cell-more { font-size: .65rem; color: var(--muted); padding-left: 5px; }
+
+@media (max-width: 720px) {
+  .cal-cell { min-height: 56px; }
+  .cal-cell-num { font-size: .75rem; }
+  .cal-cell-entry { font-size: .6rem; }
+}
+
+/* ----- Créneaux d'un jour, dans la modale (v1.37.2) : même esprit visuel qu'avant (barre de couleur + heure + nom),
+   mais repliables/dépliables comme une tâche (voir .todolib-task), créés uniquement depuis cette modale. ----- */
+
+.cal-entry { border: 1px solid var(--line); border-left: 4px solid var(--cal-chip-color, var(--accent)); border-radius: 10px; background: var(--surface-2, var(--bg)); margin-bottom: 8px; overflow: hidden; }
+.cal-entry-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: none; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.cal-entry-head:hover { background: rgba(127, 127, 127, .08); }
+.cal-entry-time { font-size: .76rem; color: var(--muted); flex: 0 0 auto; }
+.cal-entry-label { font-size: .9rem; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-entry-body { padding: 0 12px 12px; display: grid; gap: 12px; }

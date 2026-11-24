@@ -1,0 +1,1100 @@
+@inject IAppPlatform Platform
+@inject ConfigService Config
+@inject WeatherService Weather
+@inject INativeImagePicker NativeImagePicker
+<div class="settings-row">
+    <button type="button" class="settings-tile" @onclick="PickIconOrImage" aria-label="Changer l'icône" title="Changer l'icône">
+        <KeyTile Button="Button" Interactive="false" ShowLabel="false" />
+        <span class="settings-tile-edit"><i class="fa-solid fa-pen"></i></span>
+    </button>
+
+    <div class="settings-row-fields">
+        <div class="settings-span-2">
+            <ChoiceField Label="Type de bouton" Items="KindChoices" Value="@KindValue" ValueChanged="SetKind"
+                         PickerIcon="fa-solid fa-shapes" />
+        </div>
+
+        <div class="settings-span-2 settings-appearance">
+            <div class="settings-kind" role="group" aria-label="Apparence">
+                <button type="button" class="@SegmentClass(!_imageMode)" @onclick="UseIcon">Icône</button>
+                <button type="button" class="@SegmentClass(_imageMode)" @onclick="UseImage">Image</button>
+            </div>
+
+            @if (_imageMode)
+            {
+                <div class="settings-field">
+                    <span class="settings-label">Image (lien, toujours affichée carrée)</span>
+                    <div class="pathfield-row">
+                        <span class="settings-input settings-input-plain">
+                            <input @bind="Button.ImageUrl" @bind:event="oninput" placeholder="https://…" autocomplete="off" spellcheck="false" />
+                        </span>
+                        @if (NativeImagePicker.CanPick)
+                        {
+                            <button type="button" class="settings-btn pathfield-btn" @onclick="PickNativeImageAsync"><i class="fa-solid fa-upload"></i><span>Importer</span></button>
+                        }
+                        else
+                        {
+                            <InputFile OnChange="OnImageFileSelected" accept="image/*" class="settings-file-input" id="@_fileInputId" />
+                            <label class="settings-btn pathfield-btn" for="@_fileInputId"><i class="fa-solid fa-upload"></i><span>Importer</span></label>
+                        }
+                    </div>
+                    @if (_imageError is not null)
+                    {
+                        <p class="settings-hint pathfield-error">@_imageError</p>
+                    }
+                    else
+                    {
+                        <p class="settings-hint">Un lien (https://…) ou une image importée depuis cet appareil, 700 Ko maximum.</p>
+                    }
+                </div>
+            }
+        </div>
+
+        @if (!IsWidget)
+        {
+            <label class="settings-field">
+                <span class="settings-label">Nom affiché</span>
+                <span class="settings-input settings-input-plain">
+                    <input @bind="Button.Label" @bind:after="OnLabelChanged" placeholder="Nom du bouton" autocomplete="off" />
+                </span>
+            </label>
+        }
+
+        @switch (Button.Kind)
+        {
+            case ButtonKind.Script:
+                <label class="settings-field">
+                    <span class="settings-label">Nom du script</span>
+                    <span class="settings-input">
+                        <i class="fa-solid fa-terminal"></i>
+                        <input @bind="Button.Script" placeholder="timetoshine" autocomplete="off" spellcheck="false" />
+                    </span>
+                </label>
+
+                @* v1.36, "un bouton gâteau qui va lancer un timer" : minuteur démarré en plus du script. *@
+                <div class="settings-span-2">
+                    <ToggleSwitch Label="Minuteur en plus" Description="Démarre aussi un minuteur quand ce script est lancé (ex. un script qui met le four en route + un minuteur qui sonne à la fin)."
+                                  Value="Button.AttachedTimer is not null" ValueChanged="SetAttachedTimerEnabled" />
+                    @if (Button.AttachedTimer is not null)
+                    {
+                        <TimerConfigEditor Config="Button.AttachedTimer" OnChanged="State.Notify" />
+                    }
+                </div>
+                break;
+
+            case ButtonKind.Wake:
+                <label class="settings-field">
+                    <span class="settings-label">Adresse MAC (vide = celle du PC)</span>
+                    <span class="@MacClass">
+                        <i class="fa-solid fa-network-wired"></i>
+                        <input @bind="Button.Mac" placeholder="6C-02-E0-3E-35-7E" autocomplete="off" spellcheck="false" />
+                    </span>
+                </label>
+                <p class="settings-hint settings-span-2">@MacHint</p>
+                break;
+
+            case ButtonKind.PcAction:
+                <div class="settings-span-2">
+                    <ChoiceField Label="Action Windows" Items="CommandChoices" Value="@Button.Command" ValueChanged="SetCommand"
+                                 PickerIcon="fa-solid fa-desktop" />
+                    @if (CurrentCommand is not null)
+                    {
+                        <p class="settings-hint">@CurrentCommand.Description</p>
+                    }
+                </div>
+                break;
+
+            case ButtonKind.Sequence:
+                <div class="settings-span-2 settings-steps">
+                    <span class="settings-label">Étapes (exécutées dans l'ordre)</span>
+
+                    @if (Button.Steps.Count == 0)
+                    {
+                        <p class="settings-hint">Ajoute des étapes : par exemple réveiller le PC, attendre qu'il réponde, puis lancer un script.</p>
+                    }
+
+                    @foreach (var step in Button.Steps)
+                    {
+                        <StepEditor @key="step.Id" State="State" Button="Button" Step="step" />
+                    }
+
+                    <div class="settings-step-add" role="group" aria-label="Ajouter une étape">
+                        <button type="button" class="settings-btn" @onclick="() => AddStep(StepType.Wake)"><i class="fa-solid fa-power-off"></i><span>Réveil</span></button>
+                        <button type="button" class="settings-btn" @onclick="() => AddStep(StepType.WaitOnline)"><i class="fa-solid fa-hourglass-half"></i><span>Attendre le PC</span></button>
+                        <button type="button" class="settings-btn" @onclick="() => AddStep(StepType.Script)"><i class="fa-solid fa-terminal"></i><span>Script</span></button>
+                        <button type="button" class="settings-btn" @onclick="() => AddStep(StepType.PcAction)"><i class="fa-solid fa-desktop"></i><span>Action Windows</span></button>
+                        <button type="button" class="settings-btn" @onclick="() => AddStep(StepType.Delay)"><i class="fa-solid fa-clock"></i><span>Pause</span></button>
+                    </div>
+                </div>
+                break;
+
+            case ButtonKind.Picker:
+                <div class="settings-span-2 settings-steps">
+                    <span class="settings-label">Choix proposés (le popup en propose un ; un seul se lance)</span>
+
+                    @if (Button.Options.Count == 0)
+                    {
+                        <p class="settings-hint">Ajoute des choix : par exemple plusieurs liens, chacun avec sa propre icône ou image.</p>
+                    }
+
+                    @foreach (var option in Button.Options)
+                    {
+                        <OptionEditor @key="option.Id" State="State" Button="Button" Option="option" />
+                    }
+
+                    <div class="settings-step-add" role="group" aria-label="Ajouter un choix">
+                        <button type="button" class="settings-btn" @onclick="() => AddOption(StepType.Script)"><i class="fa-solid fa-terminal"></i><span>Script</span></button>
+                        <button type="button" class="settings-btn" @onclick="() => AddOption(StepType.PcAction)"><i class="fa-solid fa-desktop"></i><span>Action Windows</span></button>
+                        <button type="button" class="settings-btn" @onclick="() => AddOption(StepType.Wake)"><i class="fa-solid fa-power-off"></i><span>Réveil</span></button>
+                    </div>
+                </div>
+                break;
+
+            case ButtonKind.VolumeSlider:
+                <p class="settings-hint settings-span-2">Curseur de volume du PC, avec bouton muet. Donne-lui au moins 2 cases de large.</p>
+                break;
+
+            case ButtonKind.MediaControls:
+                <p class="settings-hint settings-span-2">Précédent, lecture / pause et suivant. Donne-lui au moins 3 cases de large.</p>
+                break;
+
+            case ButtonKind.FindPhone:
+                <p class="settings-hint settings-span-2">
+                    Fait sonner ce téléphone au volume maximum (mode sonnerie + alarme en boucle) pour le retrouver — s'arrête automatiquement après une minute, ou via le bouton qui apparaît dans la barre du haut pendant qu'il sonne.
+                    @if (!Platform.CanFindPhone)
+                    {
+                        <text> Indisponible sur cet appareil.</text>
+                    }
+                </p>
+                break;
+
+            case ButtonKind.InfoDisplay:
+                <div class="settings-span-2">
+                    <ChoiceField Label="Affiche" Items="InfoKindChoices" Value="@(((int)Button.InfoKind).ToString())" ValueChanged="SetInfoKind"
+                                 PickerIcon="fa-solid fa-expand" />
+                </div>
+                <div class="settings-span-2">
+                    <ChoiceField Label="Où" Items="CurrentInfoTargetChoices" Value="@(((int)Button.InfoTarget).ToString())" ValueChanged="SetInfoTarget"
+                                 PickerIcon="fa-solid fa-location-dot" />
+                    @if (Button.InfoKind is InfoKind.Weather or InfoKind.WorldClock)
+                    {
+                        <p class="settings-hint">Météo et heure dans le monde : appli uniquement pour l'instant, pas sur le PC piloté.</p>
+                    }
+                </div>
+
+                @if (Button.InfoKind == InfoKind.Image)
+                {
+                    <div class="settings-field settings-span-2">
+                        <span class="settings-label">Image</span>
+                        <div class="pathfield-row">
+                            <span class="settings-input settings-input-plain">
+                                <input @bind="Button.InfoImageUrl" @bind:event="oninput" placeholder="https://… ou C:\Photos\vacances.jpg" autocomplete="off" spellcheck="false" />
+                            </span>
+                            @if (NativeImagePicker.CanPick)
+                            {
+                                <button type="button" class="settings-btn pathfield-btn" @onclick="PickNativeInfoImageAsync"><i class="fa-solid fa-upload"></i><span>Importer</span></button>
+                            }
+                            else
+                            {
+                                <InputFile OnChange="OnInfoImageFileSelected" accept="image/*" class="settings-file-input" id="@_infoFileInputId" />
+                                <label class="settings-btn pathfield-btn" for="@_infoFileInputId"><i class="fa-solid fa-upload"></i><span>Importer</span></label>
+                            }
+                        </div>
+                        @if (_infoImageError is not null)
+                        {
+                            <p class="settings-hint pathfield-error">@_infoImageError</p>
+                        }
+                        else
+                        {
+                            <p class="settings-hint">
+                                Un lien (https://…), une image importée (700 Ko max — appli seulement, pas envoyée au PC),
+                                ou un chemin de fichier déjà présent sur le PC (pour l'affichage PC).
+                            </p>
+                        }
+                    </div>
+                }
+
+                @if (Button.InfoKind == InfoKind.Weather)
+                {
+                    <div class="settings-field settings-span-2">
+                        <span class="settings-label">Région</span>
+                        <span class="settings-input settings-input-plain">
+                            <input value="@GetInfoWeatherQuery()" @oninput='e => OnInfoWeatherQueryChanged((string?)e.Value ?? "")' placeholder="Rechercher une région (Genève, Paris…)" autocomplete="off" spellcheck="false" />
+                        </span>
+                        @if (_infoWeatherResults.Count > 0)
+                        {
+                            <div style="display:flex;flex-direction:column;gap:4px;margin-top:6px">
+                                @foreach (var r in _infoWeatherResults)
+                                {
+                                    <button type="button" class="settings-btn settings-btn-sm" style="justify-content:flex-start" @onclick="() => PickInfoWeatherLocation(r)">
+                                        <i class="fa-solid fa-location-dot"></i><span>@r.DisplayName</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(Button.InfoWeatherLocationName))
+                        {
+                            <p class="settings-hint"><i class="fa-solid fa-circle-check"></i> Région choisie : @Button.InfoWeatherLocationName</p>
+                        }
+                    </div>
+                }
+
+                @if (Button.InfoKind == InfoKind.WorldClock)
+                {
+                    <label class="settings-field settings-span-2">
+                        <span class="settings-label">Nom affiché (facultatif)</span>
+                        <span class="settings-input settings-input-plain">
+                            <input @bind="Button.InfoWorldClockLabel" @bind:event="oninput" placeholder="Tokyo" autocomplete="off" spellcheck="false" />
+                        </span>
+                    </label>
+                    <div class="settings-span-2">
+                        <ChoiceField Label="Fuseau horaire" Items="StreamDeck.Services.TimeZoneChoices.All" Value="@Button.InfoWorldClockTimeZoneId" ValueChanged="SetInfoWorldClockTimeZone"
+                                     PickerIcon="fa-solid fa-earth-americas" />
+                    </div>
+                }
+
+                <div class="settings-span-2">
+                    <span class="settings-label">Durée d'affichage</span>
+                    <NumberStepper Value="Button.InfoDurationSeconds" ValueChanged="SetInfoDuration" Min="0" Max="3600" />
+                    <p class="settings-hint">0 = infini (fermeture manuelle seulement, avec la croix). Sinon, en secondes.</p>
+                </div>
+                break;
+
+            case ButtonKind.Timer:
+                <div class="settings-span-2">
+                    <TimerConfigEditor Config="Button.Timer" OnChanged="State.Notify" />
+                </div>
+                break;
+        }
+
+        @if (!IsWidget)
+        {
+            <div class="settings-span-2">
+                <ToggleSwitch Label="Bouton activé" Description="Désactivé : reste dans la page, grisé, sans s'exécuter (pratique pour couper sans supprimer)."
+                              Value="Button.Enabled" ValueChanged="SetEnabled" />
+            </div>
+
+            <div class="settings-span-2">
+                <ChoiceField Label="Confirmation avant d'exécuter" Items="ConfirmChoices" Value="@ConfirmValue" ValueChanged="SetConfirm"
+                             PickerIcon="fa-solid fa-shield-halved" />
+                @if (Button.Confirm == ConfirmMode.Pin && !State.Cfg.Security.HasPin)
+                {
+                    <p class="settings-hint">Aucun code PIN défini (section Sécurité) : une simple confirmation sera demandée.</p>
+                }
+            </div>
+        }
+
+        @if (State.Cfg.Pcs.Count > 1)
+        {
+            <div class="settings-span-2">
+                <ChoiceField Label="PC visé" Items="PcChoices" Value="@PcValue" ValueChanged="SetPc"
+                             PickerIcon="fa-solid fa-desktop" />
+            </div>
+        }
+
+        <div class="settings-span-2 settings-size">
+            <div>
+                <span class="settings-label">Largeur (cases)</span>
+                <NumberStepper Value="Button.ColSpan" ValueChanged="SetColSpan" Min="1" Max="State.Page.Columns" />
+            </div>
+            <div>
+                <span class="settings-label">Hauteur (cases)</span>
+                <NumberStepper Value="Button.RowSpan" ValueChanged="SetRowSpan" Min="1" Max="State.Page.Rows" />
+            </div>
+            @if (_sizeError is not null)
+            {
+                <p class="settings-hint is-error">@_sizeError</p>
+            }
+        </div>
+
+        <div class="settings-colors settings-span-2" role="group" aria-label="Couleur">
+            @foreach (var c in Palette)
+            {
+                <button type="button" class="@SwatchClass(c)" style="background:@(c)" @onclick="() => SetColor(c)" aria-label="@c" title="@c"></button>
+            }
+            <label class="settings-swatch settings-swatch-custom" title="Couleur personnalisée">
+                <i class="fa-solid fa-eye-dropper"></i>
+                <input type="color" @bind="Button.Color" @bind:event="oninput" />
+            </label>
+        </div>
+
+        @* v1.34.18 : la saisie au clavier d'une phrase déclencheuse ne dépend plus de Platform.CanListen — seul
+           le bouton micro (Platform.RecognizeSpeechOnceAsync) le reste, lui seul a vraiment besoin d'un micro.
+           Sinon la section entière disparaissait côté PC (onglet « Téléphone » de Script Builder), qui ne pouvait
+           alors ni voir ni modifier les triggers vocaux d'un bouton composé là-bas — ils survivaient dans la
+           config (déjà exportés/importés tels quels, voir ConfigTransfer) mais restaient invisibles/en lecture
+           seule tant qu'on n'ouvrait pas ce bouton sur le téléphone. *@
+        <div class="settings-span-2 settings-voice">
+            <span class="settings-label">Commande vocale</span>
+            @if (Button.VoiceTriggers.Count > 0)
+            {
+                <div class="settings-voice-tags">
+                    @foreach (var trigger in Button.VoiceTriggers)
+                    {
+                        <span class="settings-voice-tag">
+                            @trigger
+                            <button type="button" @onclick="() => RemoveTrigger(trigger)" aria-label="Retirer « @trigger »"><i class="fa-solid fa-xmark"></i></button>
+                        </span>
+                    }
+                </div>
+            }
+            <span class="settings-input">
+                <i class="fa-solid fa-microphone"></i>
+                <input @bind="_newTrigger" @bind:event="oninput" placeholder="ex : lance spotify" autocomplete="off" spellcheck="false"
+                       @onkeydown="@(e => { if (e.Key == "Enter") AddTrigger(); })" />
+                <button type="button" class="settings-input-action" @onclick="AddTrigger" disabled="@(_newTrigger.Trim().Length == 0)" aria-label="Ajouter"><i class="fa-solid fa-plus"></i></button>
+            </span>
+            @if (Platform.CanListen)
+            {
+                <button type="button" class="settings-btn @(_listening ? "is-listening" : "")" @onclick="RecordTrigger" disabled="@_listening" title="Dis la phrase à voix haute, elle sera ajoutée telle quelle">
+                    <i class="@(_listening ? "fa-solid fa-ear-listen" : "fa-solid fa-microphone-lines")"></i><span>@(_listening ? "Écoute..." : "Enregistrer un trigger")</span>
+                </button>
+            }
+            @if (Button.VoiceTriggers.Count > 0)
+            {
+                <ToggleSwitch Label="Nécessite le mot de réveil" Description="Désactivé : ce bouton réagit à tout moment, sans dire le mot de réveil d'abord."
+                              Value="Button.VoiceRequiresWakeWord" ValueChanged="SetRequiresWakeWord" />
+            }
+        </div>
+
+        @if (Button.Kind == ButtonKind.Script)
+        {
+            <div class="settings-span-2 settings-variables">
+                <span class="settings-label">Variables ({nom} dans le script — voir Stream Deck Script Builder)</span>
+                @foreach (var v in Button.Variables)
+                {
+                    <div class="settings-variable">
+                        <div class="settings-variable-head">
+                            <span class="settings-input settings-input-plain settings-variable-name">
+                                <input @bind="v.Name" @bind:event="oninput" placeholder="nom (ex : season)" autocomplete="off" spellcheck="false" />
+                            </span>
+                            <ChoiceField Items="VarKindChoices" Value="@(((int)v.Kind).ToString())" ValueChanged="@(val => SetVarKind(v, val))" PickerIcon="fa-solid fa-shapes" />
+                            <ChoiceField Items="VarModeChoices" Value="@(((int)v.Mode).ToString())" ValueChanged="@(val => SetVarMode(v, val))" PickerIcon="fa-solid fa-sliders" />
+                            <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="() => RemoveVariable(v)" aria-label="Supprimer cette variable" title="Supprimer"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+
+                        @if (v.Kind == VariableKind.Number)
+                        {
+                            <div class="settings-variable-bounds">
+                                <label>Min <input type="number" @bind="v.Min" @bind:event="oninput" /></label>
+                                <label>Max <input type="number" @bind="v.Max" @bind:event="oninput" /></label>
+                            </div>
+                            @if (v.Mode == VariableMode.Fixed)
+                            {
+                                <div class="settings-variable-value">
+                                    <NumberStepper Value="@GetVarNumber(v)" ValueChanged="@(n => SetVarNumber(v, n))" Min="v.Min" Max="v.Max" />
+                                    <ToggleSwitch Label="Avance de 1 après chaque lancement réussi" Value="v.AutoIncrement" ValueChanged="@(on => SetAutoIncrement(v, on))" />
+                                </div>
+                            }
+                            else
+                            {
+                                <p class="settings-hint">Un sélecteur (borné @v.Min–@v.Max) sera proposé juste avant de lancer ce bouton.</p>
+                            }
+                        }
+                        else
+                        {
+                            <label class="settings-variable-bounds">Longueur max <input type="number" @bind="v.MaxLength" @bind:event="oninput" min="1" max="500" /></label>
+                            @if (v.Mode == VariableMode.Fixed)
+                            {
+                                <span class="settings-input settings-input-plain settings-variable-value">
+                                    <input @bind="v.Value" @bind:event="oninput" maxlength="@v.MaxLength" placeholder="valeur" autocomplete="off" spellcheck="false" />
+                                </span>
+                            }
+                            else
+                            {
+                                <p class="settings-hint">Un champ texte sera proposé juste avant de lancer ce bouton.</p>
+                            }
+                        }
+                    </div>
+                }
+                <button type="button" class="settings-btn" @onclick="AddVariable"><i class="fa-solid fa-plus"></i><span>Ajouter une variable</span></button>
+            </div>
+        }
+    </div>
+
+    <div class="settings-row-actions">
+        <button type="button" class="settings-btn settings-btn-icon" @onclick="() => Move(-1)" disabled="@IsFirst" aria-label="Monter" title="Monter">
+            <i class="fa-solid fa-arrow-up"></i>
+        </button>
+        <button type="button" class="settings-btn settings-btn-icon" @onclick="() => Move(1)" disabled="@IsLast" aria-label="Descendre" title="Descendre">
+            <i class="fa-solid fa-arrow-down"></i>
+        </button>
+        @if (State.PageCount > 1)
+        {
+            <button type="button" class="settings-btn settings-btn-icon" @onclick="() => MoveToPage(-1)" disabled="@CannotMoveToPage(-1)" aria-label="Vers la page précédente" title="Déplacer vers la page précédente">
+                <i class="fa-solid fa-backward-step"></i>
+            </button>
+            <button type="button" class="settings-btn settings-btn-icon" @onclick="() => MoveToPage(1)" disabled="@CannotMoveToPage(1)" aria-label="Vers la page suivante" title="Déplacer vers la page suivante">
+                <i class="fa-solid fa-forward-step"></i>
+            </button>
+        }
+        @if (State.Cfg.Workspaces.Count > 1)
+        {
+            <button type="button" class="settings-btn settings-btn-icon" @onclick="() => _moveWorkspaceOpen = true" aria-label="Déplacer vers un autre espace" title="Déplacer vers un autre espace">
+                <i class="fa-solid fa-right-left"></i>
+            </button>
+        }
+        <button type="button" class="settings-btn settings-btn-icon settings-btn-danger" @onclick="Remove" aria-label="Supprimer" title="Supprimer">
+            <i class="fa-solid fa-trash"></i>
+        </button>
+    </div>
+</div>
+
+<ChoicePicker Open="_moveWorkspaceOpen" Title="Déplacer vers un espace" Icon="fa-solid fa-right-left" Items="WorkspaceChoices" OnPick="MoveToWorkspace" OnClose="() => _moveWorkspaceOpen = false" />
+
+@code {
+    private const string DefaultIcon = "fa-solid fa-bolt";
+    private const string DefaultColor = "#3b82f6";
+    private const string DefaultLabel = "Nouveau";
+
+    private static readonly string[] Palette =
+    {
+        "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
+        "#ec4899", "#14b8a6", "#64748b", "#f97316", "#0ea5e9"
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> KindChoices = new List<ChoiceItem>
+    {
+        new(((int)ButtonKind.Script).ToString(), "Lancer un script", "Exécute un script du dossier Script du PC", "fa-solid fa-terminal"),
+        new(((int)ButtonKind.PcAction).ToString(), "Action Windows", "Média, volume, verrouiller, éteindre le PC…", "fa-solid fa-desktop"),
+        new(((int)ButtonKind.Sequence).ToString(), "Enchaînement", "Plusieurs étapes à la suite : réveil, attente, scripts…", "fa-solid fa-list-check"),
+        new(((int)ButtonKind.Picker).ToString(), "Choix multiple", "Ouvre un popup proposant plusieurs liens/actions : un seul est lancé", "fa-solid fa-list-ul"),
+        new(((int)ButtonKind.Wake).ToString(), "Réveiller un PC", "Wake-on-LAN : allume un PC éteint ou en veille", "fa-solid fa-power-off"),
+        new(((int)ButtonKind.VolumeSlider).ToString(), "Curseur de volume", "Barre pour monter et baisser le son du PC", "fa-solid fa-sliders"),
+        new(((int)ButtonKind.MediaControls).ToString(), "Contrôles média", "Précédent, lecture / pause, suivant", "fa-solid fa-music"),
+        new(((int)ButtonKind.InfoDisplay).ToString(), "Affichage plein écran", "Image, heure, date ou jour — sur l'appli et/ou sur le PC", "fa-solid fa-expand"),
+        new(((int)ButtonKind.FindPhone).ToString(), "Retrouver le téléphone", "Mode sonnerie + alarme au volume max, pour le retrouver — Android uniquement", "fa-solid fa-phone-volume"),
+        new(((int)ButtonKind.Timer).ToString(), "Minuteur / chronomètre", "Compte à rebours ou chrono façon Pomodoro, avec alarme ou script à la fin", "fa-solid fa-stopwatch")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> InfoKindChoices = new List<ChoiceItem>
+    {
+        new(((int)InfoKind.Clock).ToString(), "Heure", "Horloge, mise à jour chaque seconde", "fa-solid fa-clock"),
+        new(((int)InfoKind.Date).ToString(), "Date", "Ex : Vendredi 25 septembre 2026", "fa-solid fa-calendar-day"),
+        new(((int)InfoKind.DayOfWeek).ToString(), "Jour de la semaine", "Ex : Vendredi", "fa-solid fa-calendar-week"),
+        new(((int)InfoKind.Image).ToString(), "Image", "Lien, image importée, ou chemin sur le PC", "fa-solid fa-image"),
+        new(((int)InfoKind.Weather).ToString(), "Météo", "Météo courante d'une région choisie — appli uniquement", "fa-solid fa-cloud-sun"),
+        new(((int)InfoKind.WorldClock).ToString(), "Heure dans le monde", "Heure d'un fuseau horaire choisi — appli uniquement", "fa-solid fa-earth-americas")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> InfoTargetChoices = new List<ChoiceItem>
+    {
+        new(((int)InfoTarget.App).ToString(), "Sur l'appli", "Le téléphone/tablette/PC qui a appuyé (ou entendu la voix)", "fa-solid fa-mobile-screen"),
+        new(((int)InfoTarget.Pc).ToString(), "Sur le PC", "Fenêtre plein écran ouverte par server.ps1 sur le PC piloté", "fa-solid fa-desktop"),
+        new(((int)InfoTarget.Both).ToString(), "Les deux", "Affiché ici et envoyé au PC en même temps", "fa-solid fa-clone")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> CommandChoices = PcCommands.All
+        .Select(c => new ChoiceItem(c.Id, c.Label, c.Description, c.Icon))
+        .ToList();
+
+    private static readonly IReadOnlyList<ChoiceItem> ConfirmChoices = new List<ChoiceItem>
+    {
+        new(((int)ConfirmMode.None).ToString(), "Aucune", "S'exécute tout de suite", "fa-solid fa-bolt"),
+        new(((int)ConfirmMode.Confirm).ToString(), "Demander confirmation", "Une fenêtre Annuler / Confirmer", "fa-solid fa-circle-question"),
+        new(((int)ConfirmMode.Pin).ToString(), "Demander le code PIN", "Recommandé pour éteindre ou redémarrer le PC", "fa-solid fa-lock")
+    };
+
+    [Parameter, EditorRequired] public EditorState State { get; set; } = default!;
+    [Parameter, EditorRequired] public DeckButton Button { get; set; } = new();
+
+    private string? _sizeError;
+
+    private DeckPage Page => State.Page;
+    private bool IsWidget => ButtonKinds.IsWidget(Button.Kind);
+    private string KindValue => ((int)Button.Kind).ToString();
+    private string ConfirmValue => ((int)Button.Confirm).ToString();
+    private string PcValue => Button.PcId?.ToString() ?? string.Empty;
+    private PcCommand? CurrentCommand => PcCommands.Find(Button.Command);
+
+    private IReadOnlyList<ChoiceItem> PcChoices =>
+        new[] { new ChoiceItem(string.Empty, "PC de l'espace", null, "fa-solid fa-layer-group") }
+            .Concat(State.Cfg.Pcs.Select(p => new ChoiceItem(p.Id.ToString(), p.Name, p.ServerUrl, "fa-solid fa-desktop")))
+            .ToList();
+
+    private bool MacInvalid => !string.IsNullOrWhiteSpace(Button.Mac) && !WakeService.TryParseMac(Button.Mac, out _);
+    private string MacClass => MacInvalid ? "settings-input is-invalid" : "settings-input";
+
+    private string MacHint => MacInvalid
+        ? "Adresse MAC invalide : 12 caractères (0-9, A-F), par exemple 6C-02-E0-3E-35-7E."
+        : "Laisse vide pour utiliser l'adresse MAC du PC (section PC pilotés).";
+
+    private bool IsFirst => Page.Buttons.IndexOf(Button) == 0;
+    private bool IsLast => Page.Buttons.IndexOf(Button) == Page.Buttons.Count - 1;
+
+    private string SwatchClass(string color) =>
+        string.Equals(Button.Color, color, StringComparison.OrdinalIgnoreCase)
+            ? "settings-swatch is-active"
+            : "settings-swatch";
+
+    /// <summary>Le nom du script suit le nom affiché tant qu'il n'a pas été saisi à part (évite de taper le même nom deux fois).</summary>
+    private void OnLabelChanged()
+    {
+        if (Button.Kind == ButtonKind.Script && string.IsNullOrWhiteSpace(Button.Script))
+            Button.Script = Button.Label.Trim();
+    }
+
+    // ----- Type -----
+
+    private void SetKind(string value)
+    {
+        if (!int.TryParse(value, out var number) || !Enum.IsDefined((ButtonKind)number)) return;
+
+        var kind = (ButtonKind)number;
+        Button.Kind = kind;
+        _sizeError = null;
+
+        switch (kind)
+        {
+            case ButtonKind.Wake when Button.Icon == DefaultIcon:
+                Button.Icon = "fa-solid fa-power-off";
+                break;
+
+            case ButtonKind.Sequence when Button.Icon == DefaultIcon:
+                Button.Icon = "fa-solid fa-list-check";
+                break;
+
+            case ButtonKind.Picker when Button.Icon == DefaultIcon:
+                Button.Icon = "fa-solid fa-list-ul";
+                break;
+
+            case ButtonKind.VolumeSlider:
+                if (Button.Icon == DefaultIcon) Button.Icon = "fa-solid fa-volume-high";
+                TrySetSpan(3, 1);
+                break;
+
+            case ButtonKind.MediaControls:
+                if (Button.Icon == DefaultIcon) Button.Icon = "fa-solid fa-music";
+                TrySetSpan(3, 1);
+                break;
+
+            case ButtonKind.InfoDisplay when Button.Icon == DefaultIcon:
+                Button.Icon = "fa-solid fa-expand";
+                break;
+
+            case ButtonKind.FindPhone when Button.Icon == DefaultIcon:
+                Button.Icon = "fa-solid fa-phone-volume";
+                break;
+
+            case ButtonKind.Timer when Button.Icon == DefaultIcon:
+                Button.Icon = "fa-solid fa-stopwatch";
+                break;
+        }
+
+        State.Notify();
+    }
+
+    // ----- Minuteur attaché (v1.36, type Script surtout) -----
+
+    private void SetAttachedTimerEnabled(bool enabled)
+    {
+        Button.AttachedTimer = enabled ? new TimerConfig() : null;
+        State.Notify();
+    }
+
+    private void SetCommand(string id)
+    {
+        var command = PcCommands.Find(id);
+        if (command is null) return;
+
+        var previous = CurrentCommand;
+        Button.Command = command.Id;
+
+        // On ne remplace le nom, l'icône et la couleur que s'ils n'ont pas été personnalisés.
+        if (string.IsNullOrWhiteSpace(Button.Label) || Button.Label == DefaultLabel || Button.Label == previous?.Label)
+            Button.Label = command.Label;
+        if (Button.Icon == DefaultIcon || Button.Icon == previous?.Icon)
+            Button.Icon = command.Icon;
+        if (string.Equals(Button.Color, DefaultColor, StringComparison.OrdinalIgnoreCase) || Button.Color == previous?.Color)
+            Button.Color = command.Color;
+
+        Button.Confirm = command.DefaultConfirm;
+        State.Notify();
+    }
+
+    private void SetConfirm(string value)
+    {
+        if (int.TryParse(value, out var number) && Enum.IsDefined((ConfirmMode)number))
+            Button.Confirm = (ConfirmMode)number;
+        State.Notify();
+    }
+
+    private void SetPc(string value)
+    {
+        Button.PcId = Guid.TryParse(value, out var id) ? id : null;
+        State.Notify();
+    }
+
+    private void SetColor(string color) => Button.Color = color;
+
+    // ----- Commande vocale -----
+
+    private string _newTrigger = "";
+
+    private void AddTrigger()
+    {
+        var trigger = _newTrigger.Trim();
+        if (trigger.Length == 0) return;
+        if (!Button.VoiceTriggers.Contains(trigger, StringComparer.OrdinalIgnoreCase))
+            Button.VoiceTriggers.Add(trigger);
+        _newTrigger = "";
+        State.Notify();
+    }
+
+    private void RemoveTrigger(string trigger)
+    {
+        Button.VoiceTriggers.Remove(trigger);
+        State.Notify();
+    }
+
+    private void SetRequiresWakeWord(bool value)
+    {
+        Button.VoiceRequiresWakeWord = value;
+        State.Notify();
+    }
+
+    private bool _listening;
+
+    /// <summary>Écoute une phrase et la propose comme déclencheur — fidèle à ce que la reconnaissance vocale entend
+    /// vraiment, plutôt que d'avoir à la deviner en la tapant.</summary>
+    /// <summary>Écoute une phrase et la propose comme déclencheur — fidèle à ce que la reconnaissance vocale entend
+    /// vraiment, plutôt que d'avoir à la deviner en la tapant.
+    /// Met en pause l'écoute continue le temps de l'enregistrement (le micro ne peut servir qu'à une reconnaissance
+    /// à la fois — sans ça, les deux se coupent l'herbe sous le pied et rien ne s'enregistre), puis la relance
+    /// ensuite si elle était active.</summary>
+    private async Task RecordTrigger()
+    {
+        var wasListening = Config.Current.Voice.Enabled;
+        if (wasListening)
+        {
+            await Platform.SetVoiceListeningAsync(false);
+            await Task.Delay(400); // laisse le temps au micro de vraiment se libérer avant d'en redemander l'accès
+        }
+
+        _listening = true;
+        StateHasChanged();
+
+        string? heard = null;
+        try { heard = await Platform.RecognizeSpeechOnceAsync(); }
+        finally
+        {
+            _listening = false;
+            if (wasListening) await Platform.SetVoiceListeningAsync(true);
+        }
+
+        if (!string.IsNullOrWhiteSpace(heard))
+        {
+            var trigger = heard.Trim();
+            if (!Button.VoiceTriggers.Contains(trigger, StringComparer.OrdinalIgnoreCase))
+                Button.VoiceTriggers.Add(trigger);
+            State.Notify();
+        }
+    }
+
+    // ----- Variables de script ({season}, {episode}...) -----
+
+    private static readonly IReadOnlyList<ChoiceItem> VarKindChoices = new List<ChoiceItem>
+    {
+        new(((int)VariableKind.Number).ToString(), "Nombre", null, "fa-solid fa-hashtag"),
+        new(((int)VariableKind.Text).ToString(), "Texte", null, "fa-solid fa-font")
+    };
+
+    private static readonly IReadOnlyList<ChoiceItem> VarModeChoices = new List<ChoiceItem>
+    {
+        new(((int)VariableMode.Fixed).ToString(), "Réglée ici", "Envoyée telle quelle à chaque lancement", "fa-solid fa-lock"),
+        new(((int)VariableMode.Prompt).ToString(), "Au lancement", "Un sélecteur s'affiche juste avant de lancer", "fa-solid fa-hand-pointer")
+    };
+
+    private void AddVariable()
+    {
+        Button.Variables.Add(new ButtonVariable { Name = $"variable{Button.Variables.Count + 1}" });
+        State.Notify();
+    }
+
+    private void RemoveVariable(ButtonVariable v)
+    {
+        Button.Variables.Remove(v);
+        State.Notify();
+    }
+
+    private void SetVarKind(ButtonVariable v, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((VariableKind)n)) v.Kind = (VariableKind)n;
+        State.Notify();
+    }
+
+    private void SetVarMode(ButtonVariable v, string value)
+    {
+        if (int.TryParse(value, out var n) && Enum.IsDefined((VariableMode)n)) v.Mode = (VariableMode)n;
+        State.Notify();
+    }
+
+    private static int GetVarNumber(ButtonVariable v) => int.TryParse(v.Value, out var n) ? n : v.Min;
+
+    private void SetVarNumber(ButtonVariable v, int n)
+    {
+        v.Value = n.ToString();
+        State.Notify();
+    }
+
+    private void SetAutoIncrement(ButtonVariable v, bool on)
+    {
+        v.AutoIncrement = on;
+        State.Notify();
+    }
+
+    private void SetEnabled(bool value)
+    {
+        Button.Enabled = value;
+        State.Notify();
+    }
+
+    // ----- Icône / Image -----
+
+    private const long MaxImageBytes = 700 * 1024;
+    private readonly string _fileInputId = $"img-{Guid.NewGuid():N}";
+    private bool _imageMode;
+    private string? _imageError;
+
+    protected override void OnInitialized() => _imageMode = !string.IsNullOrEmpty(Button.ImageUrl);
+
+    private string SegmentClass(bool active) => active ? "settings-kind-btn is-active" : "settings-kind-btn";
+
+    private void PickIconOrImage()
+    {
+        if (_imageMode) return; // le clic sur la vignette ne sert qu'à choisir une icône ; l'image se règle dans les champs ci-dessous
+        PickIcon();
+    }
+
+    private void PickIcon() => State.RequestIcon(Button.Icon, cls => Button.Icon = cls);
+
+    private void UseIcon()
+    {
+        _imageMode = false;
+        _imageError = null;
+        Button.ImageUrl = "";
+        State.Notify();
+    }
+
+    private void UseImage()
+    {
+        _imageMode = true;
+        State.Notify();
+    }
+
+    private async Task OnImageFileSelected(InputFileChangeEventArgs e)
+    {
+        _imageError = null;
+        var file = e.File;
+        if (file is null) return;
+
+        if (file.Size > MaxImageBytes)
+        {
+            _imageError = $"Image trop lourde ({file.Size / 1024} Ko, {MaxImageBytes / 1024} Ko maximum) : réduis-la ou utilise un lien.";
+            State.Notify();
+            return;
+        }
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxImageBytes + 1);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var mime = string.IsNullOrWhiteSpace(file.ContentType) ? "image/png" : file.ContentType;
+            Button.ImageUrl = $"data:{mime};base64,{Convert.ToBase64String(ms.ToArray())}";
+        }
+        catch (Exception ex)
+        {
+            _imageError = $"Impossible de lire cette image : {ex.Message}";
+        }
+
+        State.Notify();
+    }
+
+    /// <summary>v1.34.19 : équivalent de <see cref="OnImageFileSelected"/> mais via le sélecteur natif (écran noir/plantage avec &lt;InputFile&gt; sur cet hôte — voir INativeImagePicker).</summary>
+    private async Task PickNativeImageAsync()
+    {
+        _imageError = null;
+        var dataUrl = await NativeImagePicker.PickImageAsync();
+        if (dataUrl is null) { State.Notify(); return; } // annulé, ou échec silencieux — même traitement qu'un InputFile annulé
+
+        if (!TryCheckImageSize(dataUrl, MaxImageBytes, out var error))
+        {
+            _imageError = error;
+            State.Notify();
+            return;
+        }
+
+        Button.ImageUrl = dataUrl;
+        State.Notify();
+    }
+
+    /// <summary>Vérifie la taille (décodée) d'une image déjà en data URI — le sélecteur natif, contrairement à InputFile, ne donne la taille qu'après lecture complète du fichier.</summary>
+    private static bool TryCheckImageSize(string dataUrl, long maxBytes, out string? error)
+    {
+        var comma = dataUrl.IndexOf(',');
+        var base64 = comma >= 0 ? dataUrl[(comma + 1)..] : dataUrl;
+        var approxBytes = (long)base64.Length * 3 / 4;
+
+        if (approxBytes > maxBytes)
+        {
+            error = $"Image trop lourde (~{approxBytes / 1024} Ko, {maxBytes / 1024} Ko maximum) : réduis-la ou utilise un lien.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    // ----- Type InfoDisplay -----
+
+    private const long MaxInfoImageBytes = 700 * 1024;
+    private readonly string _infoFileInputId = $"infoimg-{Guid.NewGuid():N}";
+    private string? _infoImageError;
+
+    private void SetInfoKind(string value)
+    {
+        if (int.TryParse(value, out var number) && Enum.IsDefined((InfoKind)number))
+        {
+            Button.InfoKind = (InfoKind)number;
+            // Météo/heure dans le monde : appli uniquement pour l'instant (v1.34.6) — si le bouton visait le PC ou
+            // les deux, on retombe sur "appli" plutôt que de garder un réglage qui ne ferait plus rien sur le PC.
+            if (Button.InfoKind is InfoKind.Weather or InfoKind.WorldClock && Button.InfoTarget != InfoTarget.App)
+            {
+                Button.InfoTarget = InfoTarget.App;
+            }
+            State.Notify();
+        }
+    }
+
+    private void SetInfoTarget(string value)
+    {
+        if (int.TryParse(value, out var number) && Enum.IsDefined((InfoTarget)number))
+        {
+            Button.InfoTarget = (InfoTarget)number;
+            State.Notify();
+        }
+    }
+
+    /// <summary>InfoTargetChoices, sans "Sur le PC" pour météo/heure dans le monde (non pris en charge côté PC).</summary>
+    private IReadOnlyList<ChoiceItem> CurrentInfoTargetChoices =>
+        Button.InfoKind is InfoKind.Weather or InfoKind.WorldClock
+            ? InfoTargetChoices.Where(c => c.Value != ((int)InfoTarget.Pc).ToString()).ToList()
+            : InfoTargetChoices;
+
+    // ----- InfoKind.Weather : recherche de région via Open-Meteo (WeatherService), même schéma que le bloc
+    // "weather" du widget de bureau (WidgetConfigPanel.razor). -----
+
+    private string _infoWeatherQuery = "";
+    private List<WeatherLocationResult> _infoWeatherResults = new();
+
+    private string GetInfoWeatherQuery() => _infoWeatherQuery.Length > 0 ? _infoWeatherQuery : Button.InfoWeatherLocationName;
+
+    private async Task OnInfoWeatherQueryChanged(string value)
+    {
+        _infoWeatherQuery = value;
+        _infoWeatherResults = value.Trim().Length >= 2 ? await Weather.SearchLocationsAsync(value) : new();
+        State.Notify();
+    }
+
+    private void PickInfoWeatherLocation(WeatherLocationResult loc)
+    {
+        Button.InfoWeatherLocationName = loc.DisplayName;
+        Button.InfoWeatherLat = loc.Latitude;
+        Button.InfoWeatherLon = loc.Longitude;
+        _infoWeatherQuery = loc.DisplayName;
+        _infoWeatherResults = new();
+        State.Notify();
+    }
+
+    // ----- InfoKind.WorldClock -----
+
+    private void SetInfoWorldClockTimeZone(string tzId)
+    {
+        Button.InfoWorldClockTimeZoneId = tzId;
+        State.Notify();
+    }
+
+    private void SetInfoDuration(int value)
+    {
+        Button.InfoDurationSeconds = Math.Clamp(value, 0, 3600);
+        State.Notify();
+    }
+
+    /// <summary>v1.34.19 : équivalent de <see cref="OnInfoImageFileSelected"/> mais via le sélecteur natif — voir PickNativeImageAsync.</summary>
+    private async Task PickNativeInfoImageAsync()
+    {
+        _infoImageError = null;
+        var dataUrl = await NativeImagePicker.PickImageAsync();
+        if (dataUrl is null) { State.Notify(); return; }
+
+        if (!TryCheckImageSize(dataUrl, MaxInfoImageBytes, out var error))
+        {
+            _infoImageError = error;
+            State.Notify();
+            return;
+        }
+
+        Button.InfoImageUrl = dataUrl;
+        State.Notify();
+    }
+
+    private async Task OnInfoImageFileSelected(InputFileChangeEventArgs e)
+    {
+        _infoImageError = null;
+        var file = e.File;
+        if (file is null) return;
+
+        if (file.Size > MaxInfoImageBytes)
+        {
+            _infoImageError = $"Image trop lourde ({file.Size / 1024} Ko, {MaxInfoImageBytes / 1024} Ko maximum) : réduis-la ou utilise un lien.";
+            State.Notify();
+            return;
+        }
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxInfoImageBytes + 1);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var mime = string.IsNullOrWhiteSpace(file.ContentType) ? "image/png" : file.ContentType;
+            Button.InfoImageUrl = $"data:{mime};base64,{Convert.ToBase64String(ms.ToArray())}";
+        }
+        catch (Exception ex)
+        {
+            _infoImageError = $"Impossible de lire cette image : {ex.Message}";
+        }
+
+        State.Notify();
+    }
+
+    // ----- Taille -----
+
+    private void SetColSpan(int value) => TrySetSpan(value, Button.RowSpan);
+    private void SetRowSpan(int value) => TrySetSpan(Button.ColSpan, value);
+
+    /// <summary>Change la taille seulement s'il reste assez de place sur la page.</summary>
+    private void TrySetSpan(int columns, int rows)
+    {
+        columns = Math.Clamp(columns, 1, Page.Columns);
+        rows = Math.Clamp(rows, 1, Page.Rows);
+
+        if (Page.CanFit(columns, rows, Button))
+        {
+            Button.ColSpan = columns;
+            Button.RowSpan = rows;
+            _sizeError = null;
+        }
+        else
+        {
+            _sizeError = "Pas assez de place sur cette page pour cette taille.";
+        }
+    }
+
+    // ----- Étapes d'un enchaînement -----
+
+    private void AddStep(StepType type)
+    {
+        Button.Steps.Add(new SequenceStep
+        {
+            Type = type,
+            Seconds = type switch
+            {
+                StepType.WaitOnline => 120,
+                StepType.Delay => 5,
+                _ => 30
+            }
+        });
+        State.Notify();
+    }
+
+    private void AddOption(StepType type)
+    {
+        var icon = type switch
+        {
+            StepType.PcAction => "fa-solid fa-desktop",
+            StepType.Wake => "fa-solid fa-power-off",
+            _ => "fa-solid fa-bolt"
+        };
+
+        Button.Options.Add(new ChoiceOption
+        {
+            Type = type,
+            Icon = icon,
+            Color = Palette[Button.Options.Count % Palette.Length]
+        });
+        State.Notify();
+    }
+
+    // ----- Position -----
+
+    private void Move(int delta)
+    {
+        var buttons = Page.Buttons;
+        var i = buttons.IndexOf(Button);
+        var j = i + delta;
+        if (i < 0 || j < 0 || j >= buttons.Count) return;
+
+        (buttons[i], buttons[j]) = (buttons[j], buttons[i]);
+        State.Notify();
+    }
+
+    private bool _moveWorkspaceOpen;
+
+    private IReadOnlyList<ChoiceItem> WorkspaceChoices =>
+        State.Cfg.Workspaces.Where(w => w.Id != State.Ws.Id)
+            .Select(w => new ChoiceItem(w.Id.ToString(), w.Name, $"{w.Pages.Count} page{(w.Pages.Count > 1 ? "s" : "")}", w.Icon))
+            .ToList();
+
+    private void MoveToWorkspace(string id)
+    {
+        _moveWorkspaceOpen = false;
+        if (!Guid.TryParse(id, out var workspaceId)) return;
+
+        var target = State.Cfg.Workspaces.FirstOrDefault(w => w.Id == workspaceId);
+        if (target is null || target == State.Ws) return;
+
+        Page.Buttons.Remove(Button);
+
+        // Première page où le bouton tient ; sinon une nouvelle page, comme quand une page se remplit trop.
+        var destPage = target.Pages.FirstOrDefault(p => p.CanFit(Button.ColSpan, Button.RowSpan));
+        if (destPage is null)
+        {
+            destPage = target.Pages.Count > 0 ? target.Pages[^1].NewPageLikeThis() : new DeckPage();
+            target.Pages.Add(destPage);
+        }
+
+        // La grille de la page de destination peut être plus petite : on adapte la taille du bouton si besoin.
+        Button.ColSpan = Math.Clamp(Button.ColSpan, 1, destPage.Columns);
+        Button.RowSpan = Math.Clamp(Button.RowSpan, 1, destPage.Rows);
+        destPage.Buttons.Add(Button);
+
+        State.Notify();
+    }
+
+    private bool CannotMoveToPage(int delta)
+    {
+        var target = State.PageIndex + delta;
+        return target < 0 || target >= State.PageCount || !State.Ws.Pages[target].CanFit(Button.ColSpan, Button.RowSpan);
+    }
+
+    private void MoveToPage(int delta)
+    {
+        if (CannotMoveToPage(delta)) return;
+
+        var target = State.Ws.Pages[State.PageIndex + delta];
+        Page.Buttons.Remove(Button);
+
+        // Vers la page précédente : en dernier ; vers la suivante : en premier.
+        if (delta < 0) target.Buttons.Add(Button);
+        else target.Buttons.Insert(0, Button);
+
+        State.Notify();
+    }
+
+    private void Remove()
+    {
+        Page.Buttons.Remove(Button);
+        State.Notify();
+    }
+}

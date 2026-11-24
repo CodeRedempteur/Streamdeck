@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="StreamDeck.Shared/StreamDeck.Shared.csproj" />
+  <Project Path="StreamDeck.Desktop/StreamDeck.Desktop.csproj" />
+  <Project Path="StreamDeck.Android/StreamDeck.Android.csproj" />
+  <Project Path="StreamDeck.ScriptBuilder/StreamDeck.ScriptBuilder.csproj" />
+  <Project Path="StreamDeck.ScriptBuilder.Windows/StreamDeck.ScriptBuilder.Windows.csproj" />
+</Solution>

@@ -1,0 +1,92 @@
+@* Bibliothèque de listes de tâches (v1.34.8) : demandé explicitement — les tâches ne sont plus embarquées
+   directement dans un bloc "todo" du widget, elles vivent ici (rangeables dans des dossiers, comme les scripts) et
+   un bloc "todo" se contente d'en CHOISIR une (voir WidgetConfigPanel.razor, TodoListChoices) — comme un bloc "mail"
+   choisit une boîte mail. Ça permet aussi de "changer une liste de page" (demandé) sans rien dupliquer : il suffit de
+   retirer le bloc "todo" d'une page et d'en ajouter un ailleurs avec la même liste choisie ; on peut même la choisir
+   sur PLUSIEURS pages à la fois, elle reste synchronisée partout. *@
+@page "/todos"
+@inject BuilderConfigService Config
+@inject TodoEditorSession EditorSession
+@inject NavigationManager Nav
+
+<div class="lib">
+    <MainHeader ActiveTab="todos" Subtitle="Des listes de tâches réutilisables, rangeables dans des dossiers, à choisir dans les pages du widget." />
+
+    <section class="settings-card">
+        <div class="settings-card-head">
+            <span class="settings-chip"><i class="fa-solid fa-list-check"></i></span>
+            <div>
+                <h2>Tes listes</h2>
+                <p>Choisies ensuite dans un bloc « Liste de tâches » du widget (onglet Widget) — une même liste peut être choisie sur plusieurs pages à la fois.</p>
+            </div>
+        </div>
+
+        @if (Config.Current.TodoLists.Count > 6)
+        {
+            <div class="choice-search" style="margin-bottom:14px">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="text" value="@_query" @oninput="e => _query = (string?)e.Value ?? string.Empty" placeholder="Rechercher une liste…" autocomplete="off" spellcheck="false" />
+            </div>
+        }
+
+        @if (Config.Current.TodoLists.Count == 0)
+        {
+            <p class="settings-hint">Aucune liste pour l'instant.</p>
+        }
+        else
+        {
+            @foreach (var folderGroup in FilteredLists.GroupBy(l => l.Folder).OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                <div class="todolib-folder">
+                    <p class="todolib-folder-title">
+                        <i class="fa-solid @(string.IsNullOrWhiteSpace(folderGroup.Key) ? "fa-inbox" : "fa-folder")"></i>
+                        @(string.IsNullOrWhiteSpace(folderGroup.Key) ? "Racine" : folderGroup.Key)
+                    </p>
+                    <div class="todolib-grid">
+                        @foreach (var list in folderGroup.OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase))
+                        {
+                            var total = list.Items.Count;
+                            var done = list.Items.Count(t => t.Done);
+                            <button type="button" class="todolib-card" @onclick="() => Open(list.Id)">
+                                <span class="todolib-card-icon"><i class="fa-solid fa-list-check"></i></span>
+                                <span class="todolib-card-lines">
+                                    <span class="todolib-card-name">@(string.IsNullOrWhiteSpace(list.Name) ? "(sans nom)" : list.Name)</span>
+                                    <span class="todolib-card-meta">@(total == 0 ? "Vide" : $"{done}/{total} faite(s)")</span>
+                                </span>
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+        }
+
+        <button type="button" class="settings-btn settings-btn-sm" @onclick="AddList"><i class="fa-solid fa-plus"></i><span>Nouvelle liste</span></button>
+        <div class="settings-hint-row"><InfoHint>Le dossier d'une liste se change directement dans son éditeur (champ « Dossier », jusqu'à 3 niveaux, ex. <code>Perso/Courses</code>) — pas de glisser-déposer pour l'instant, contrairement aux scripts.</InfoHint></div>
+    </section>
+</div>
+
+@code {
+    private string _query = "";
+
+    private IEnumerable<TodoListInfo> FilteredLists =>
+        string.IsNullOrWhiteSpace(_query)
+            ? Config.Current.TodoLists
+            : Config.Current.TodoLists.Where(l => l.Name.Contains(_query, StringComparison.OrdinalIgnoreCase));
+
+    // v1.34.13 : l'édition d'une liste (nom, dossier, tâches...) est maintenant une page plein écran séparée
+    // (TodoEditor.razor, route "/todo-editor") plutôt qu'une modale ici — demandé explicitement ("fait plutot en
+    // sorte davoir une page comme les page de script"), avec de la place pour de futures fonctionnalités par tâche
+    // (ex. déclencher un script une fois faite). Cette page ne garde que la bibliothèque (grille de cartes).
+    private void Open(string listId)
+    {
+        EditorSession.ListId = listId;
+        Nav.NavigateTo("todo-editor");
+    }
+
+    private void AddList()
+    {
+        var list = new TodoListInfo { Name = "Nouvelle liste" };
+        Config.Update(c => c.TodoLists.Add(list));
+        Open(list.Id);
+    }
+}

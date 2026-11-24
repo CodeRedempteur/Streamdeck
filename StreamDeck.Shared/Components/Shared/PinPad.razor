@@ -1,0 +1,83 @@
+<div class="pinpad">
+    @if (!string.IsNullOrEmpty(Message))
+    {
+        <p class="pinpad-message">@Message</p>
+    }
+
+    <div class="pinpad-dots" aria-live="polite" aria-label="@DotsLabel">
+        @for (var i = 0; i < DotCount; i++)
+        {
+            <span class="@DotClass(i)"></span>
+        }
+    </div>
+
+    <p class="@FeedbackClass" role="alert">@_feedback</p>
+
+    <div class="pinpad-keys">
+        <button type="button" class="pinpad-key" @onclick="() => Digit(1)">1</button>
+        <button type="button" class="pinpad-key" @onclick="() => Digit(2)">2</button>
+        <button type="button" class="pinpad-key" @onclick="() => Digit(3)">3</button>
+        <button type="button" class="pinpad-key" @onclick="() => Digit(4)">4</button>
+        <button type="button" class="pinpad-key" @onclick="() => Digit(5)">5</button>
+        <button type="button" class="pinpad-key" @onclick="() => Digit(6)">6</button>
+        <button type="button" class="pinpad-key" @onclick="() => Digit(7)">7</button>
+        <button type="button" class="pinpad-key" @onclick="() => Digit(8)">8</button>
+        <button type="button" class="pinpad-key" @onclick="() => Digit(9)">9</button>
+        <button type="button" class="pinpad-key pinpad-key-alt" @onclick="Backspace" disabled="@(_pin.Length == 0)" aria-label="Effacer" title="Effacer">
+            <i class="fa-solid fa-delete-left"></i>
+        </button>
+        <button type="button" class="pinpad-key" @onclick="() => Digit(0)">0</button>
+        <button type="button" class="pinpad-key pinpad-key-ok" @onclick="Submit" disabled="@CannotSubmit" aria-label="Valider" title="Valider">
+            <i class="fa-solid fa-check"></i>
+        </button>
+    </div>
+</div>
+
+@code {
+    /// <summary>Réponse à un code saisi : accepté, ou message à afficher.</summary>
+    public record Feedback(bool Accepted, string? Message = null);
+
+    [Parameter] public string? Message { get; set; }
+
+    /// <summary>Appelé quand l'utilisateur valide un code.</summary>
+    [Parameter] public Func<string, Feedback> OnSubmit { get; set; } = _ => new Feedback(true);
+
+    [Parameter] public int MinLength { get; set; } = SecuritySettings.MinPinLength;
+    [Parameter] public int MaxLength { get; set; } = SecuritySettings.MaxPinLength;
+
+    private string _pin = string.Empty;
+    private string? _feedback;
+    private bool _wrong;
+
+    private int DotCount => Math.Max(MinLength, _pin.Length);
+    private string DotsLabel => $"{_pin.Length} chiffre(s) saisi(s)";
+    private string DotClass(int index) => index < _pin.Length ? "pinpad-dot is-filled" : "pinpad-dot";
+    private string FeedbackClass => _wrong ? "pinpad-feedback is-error" : "pinpad-feedback";
+    private bool CannotSubmit => _pin.Length < MinLength;
+
+    private void Digit(int value)
+    {
+        if (_pin.Length >= MaxLength) return;
+        _pin += value.ToString();
+        _feedback = null;
+        _wrong = false;
+    }
+
+    private void Backspace()
+    {
+        if (_pin.Length == 0) return;
+        _pin = _pin[..^1];
+    }
+
+    private void Submit()
+    {
+        if (CannotSubmit) return;
+
+        var code = _pin;
+        _pin = string.Empty;
+
+        var result = OnSubmit(code);
+        _wrong = !result.Accepted;
+        _feedback = result.Accepted ? null : result.Message ?? "Code incorrect";
+    }
+}

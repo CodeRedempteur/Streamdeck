@@ -1,0 +1,60 @@
+/* Variables globales et base. Le style de chaque composant est dans wwwroot/css/<Composant>.css */
+
+:root {
+  --bg: #0b0d12;
+  --surface: #141822;
+  --surface-2: #1a2030;
+  --line: rgba(255, 255, 255, .08);
+  --line-strong: rgba(255, 255, 255, .18);
+  --text: #eef1f7;
+  --muted: #8a93a6;
+  --accent: #4f8cff;
+  --accent-strong: #3b76ea;
+  --ok: #34d399;
+  --err: #f87171;
+  --radius: 14px;
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans", sans-serif;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html { height: 100%; background: var(--bg); }
+
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text);
+  background: radial-gradient(1100px 520px at 50% -8%, #18203a 0%, var(--bg) 62%) no-repeat;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .14); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .26); background-clip: content-box; }
+
+.boot {
+  height: 100vh;
+  margin: 0;
+  display: grid;
+  place-content: center;
+  grid-auto-flow: column;
+  align-items: center;
+  color: var(--muted);
+}
+
+#blazor-error-ui {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  padding: 12px 20px;
+  background: #3a1518;
+  color: #ffd7d7;
+}
+#blazor-error-ui .reload { margin-left: 12px; font-weight: 600; }

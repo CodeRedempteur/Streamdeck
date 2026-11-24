@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>StreamDeck.ScriptBuilder</RootNamespace>
+    <AssemblyName>StreamDeck.ScriptBuilder</AssemblyName>
+    <PackageId>StreamDeck.ScriptBuilder</PackageId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.*" />
+    <!-- Réutilise les composants (modale, listes de choix, interrupteurs…), le thème et Font Awesome de Stream Deck -->
+    <ProjectReference Include="..\StreamDeck.Shared\StreamDeck.Shared.csproj" />
+    <!-- Boîtes mail du widget (MailFetchService) : client IMAP en lecture seule. -->
+    <PackageReference Include="MailKit" Version="4.*" />
+    <!-- Mot de passe des boîtes mail protégé (DPAPI) plutôt que stocké en clair — voir MailCredentialProtector. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,69 @@
+@inject IJSRuntime JS
+
+<section class="@(Open ? "code" : "code is-closed")">
+    <header class="code-head">
+        <button type="button" class="code-toggle" @onclick="Toggle" aria-expanded="@(Open ? "true" : "false")" title="@(Open ? "Masquer l'aperçu" : "Afficher l'aperçu")">
+            <i class="@(Open ? "fa-solid fa-chevron-down" : "fa-solid fa-chevron-right")"></i>
+            <i class="fa-solid fa-code"></i><span>Aperçu du script</span>
+        </button>
+        @if (Open)
+        {
+            <button type="button" class="code-copy" @onclick="CopyAsync" title="Copier le script">
+                <i class="@(_copied ? "fa-solid fa-check" : "fa-solid fa-copy")"></i><span>@(_copied ? "Copié" : "Copier")</span>
+            </button>
+        }
+    </header>
+
+    @if (Open)
+    {
+        <div class="code-body" role="region" aria-label="Code du script" tabindex="0">
+            @foreach (var line in Lines)
+            {
+                <div class="@LineClass(line)">@(line.Length == 0 ? "\u00A0" : line)</div>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string Code { get; set; } = string.Empty;
+
+    /// <summary>Aperçu déplié (le code est masqué quand il est replié).</summary>
+    [Parameter] public bool Open { get; set; } = true;
+    [Parameter] public EventCallback OnToggle { get; set; }
+
+    private bool _copied;
+
+    private Task Toggle() => OnToggle.InvokeAsync();
+
+    /// <summary>Le projet embarqué (base64) est masqué : illisible et sans intérêt.</summary>
+    private IEnumerable<string> Lines
+    {
+        get
+        {
+            var shown = Code.Replace("\r", "").TrimEnd('\n').Split('\n').Where(l => !l.StartsWith(ScriptGenerator.ProjectMarker, StringComparison.Ordinal)).ToList();
+            shown.Add("# … (données du constructeur, masquées)");
+            return shown;
+        }
+    }
+
+    private static string LineClass(string line) => line.TrimStart().StartsWith('#') ? "code-row code-comment" : "code-row code-line";
+
+    private async Task CopyAsync()
+    {
+        var text = string.Join("\r\n", Code.Replace("\r", "").Split('\n').Where(l => !l.StartsWith(ScriptGenerator.ProjectMarker, StringComparison.Ordinal)));
+
+        try
+        {
+            _copied = await JS.InvokeAsync<bool>("deck.copyText", text);
+        }
+        catch (Exception)
+        {
+            _copied = false;
+        }
+
+        StateHasChanged();
+        await Task.Delay(1500);
+        _copied = false;
+    }
+}

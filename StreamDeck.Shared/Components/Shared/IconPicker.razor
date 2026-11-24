@@ -1,0 +1,165 @@
+<Modal Open="Open" Title="Choisir une icône" Icon="fa-solid fa-icons" OnClose="OnClose">
+    <div class="picker-search">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input @bind="_search" @bind:event="oninput" placeholder="Rechercher (en anglais : power, music, lock, home)" autocomplete="off" spellcheck="false" />
+    </div>
+
+    <p class="picker-caption">@Caption</p>
+
+    <div class="picker-grid">
+        @foreach (var ic in Results)
+        {
+            <button type="button" class="@CellClass(ic.Class)" title="@ic.Class" @onclick="() => Pick(ic.Class)">
+                <i class="@ic.Class"></i>
+            </button>
+        }
+    </div>
+
+    @if (Results.Count == 0)
+    {
+        <p class="picker-empty">Aucune icône trouvée.</p>
+    }
+
+    <div class="picker-custom">
+        <span class="picker-label">Classe Font Awesome personnalisée</span>
+        <div class="picker-custom-row">
+            <input @bind="_custom" placeholder="fa-solid fa-bolt" autocomplete="off" spellcheck="false" />
+            <button type="button" class="picker-btn" @onclick="ApplyCustom" disabled="@CustomInvalid">
+                <i class="fa-solid fa-check"></i><span>Utiliser</span>
+            </button>
+        </div>
+    </div>
+</Modal>
+
+@code {
+    private const int MaxResults = 150;
+
+    private static readonly string[] Suggested =
+    {
+        "fa-solid fa-power-off",
+        "fa-solid fa-bolt",
+        "fa-solid fa-lightbulb",
+        "fa-solid fa-play",
+        "fa-solid fa-pause",
+        "fa-solid fa-stop",
+        "fa-solid fa-forward",
+        "fa-solid fa-backward",
+        "fa-solid fa-volume-high",
+        "fa-solid fa-volume-xmark",
+        "fa-solid fa-music",
+        "fa-solid fa-microphone",
+        "fa-solid fa-video",
+        "fa-solid fa-camera",
+        "fa-solid fa-tv",
+        "fa-solid fa-display",
+        "fa-solid fa-desktop",
+        "fa-solid fa-laptop",
+        "fa-solid fa-gamepad",
+        "fa-solid fa-house",
+        "fa-solid fa-door-open",
+        "fa-solid fa-lock",
+        "fa-solid fa-unlock",
+        "fa-solid fa-key",
+        "fa-solid fa-wifi",
+        "fa-solid fa-plug",
+        "fa-solid fa-rotate",
+        "fa-solid fa-arrows-rotate",
+        "fa-solid fa-moon",
+        "fa-solid fa-sun",
+        "fa-solid fa-terminal",
+        "fa-solid fa-code",
+        "fa-solid fa-folder-open",
+        "fa-solid fa-envelope",
+        "fa-solid fa-phone",
+        "fa-solid fa-bell",
+        "fa-solid fa-gear",
+        "fa-solid fa-wrench",
+        "fa-solid fa-fire",
+        "fa-solid fa-snowflake",
+        "fa-solid fa-star",
+        "fa-solid fa-heart",
+        "fa-solid fa-globe",
+        "fa-solid fa-rocket",
+        "fa-solid fa-wand-magic-sparkles",
+        "fa-solid fa-print",
+        "fa-solid fa-download",
+        "fa-solid fa-cloud",
+        "fa-brands fa-spotify",
+        "fa-brands fa-chrome",
+        "fa-brands fa-youtube",
+        "fa-brands fa-discord",
+        "fa-brands fa-github",
+        "fa-brands fa-steam"
+    };
+
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public string? Current { get; set; }
+    [Parameter] public EventCallback<string> OnPick { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string _search = string.Empty;
+    private string _custom = string.Empty;
+    private bool _wasOpen;
+
+    private string _cachedKey = "\0";
+    private List<(string Class, string Search)> _cached = new();
+
+    protected override void OnParametersSet()
+    {
+        // À chaque ouverture : recherche vide, champ personnalisé prérempli avec l'icône actuelle.
+        if (Open && !_wasOpen)
+        {
+            _search = string.Empty;
+            _custom = Current ?? string.Empty;
+        }
+        _wasOpen = Open;
+    }
+
+    private List<(string Class, string Search)> Results
+    {
+        get
+        {
+            var key = _search.Trim().ToLowerInvariant();
+            if (key != _cachedKey)
+            {
+                _cached = Compute(key);
+                _cachedKey = key;
+            }
+            return _cached;
+        }
+    }
+
+    private static List<(string Class, string Search)> Compute(string key)
+    {
+        var words = key.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        if (words.Length == 0)
+            return FaIcons.All.Where(x => Suggested.Contains(x.Class)).ToList();
+
+        return FaIcons.All
+            .Where(x => words.All(w => x.Search.Contains(w)))
+            .Take(MaxResults)
+            .ToList();
+    }
+
+    private string Caption
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_search)) return "Suggestions";
+            return Results.Count >= MaxResults
+                ? $"{MaxResults} premiers résultats : affine la recherche"
+                : $"{Results.Count} résultat(s)";
+        }
+    }
+
+    private string CellClass(string cls) =>
+        cls == Current ? "picker-cell is-selected" : "picker-cell";
+
+    private bool CustomInvalid =>
+        !(_custom ?? string.Empty).Trim().StartsWith("fa-", StringComparison.Ordinal);
+
+    private Task Pick(string cls) => OnPick.InvokeAsync(cls);
+
+    private Task ApplyCustom() => OnPick.InvokeAsync(_custom.Trim());
+}

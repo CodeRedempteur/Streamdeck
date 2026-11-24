@@ -1,0 +1,3 @@
+/* VariablePromptPopup : un champ par variable "au lancement" (nombre ou texte). */
+.varprompt-field { margin-bottom: 16px; }
+.varprompt-field:last-child { margin-bottom: 0; }

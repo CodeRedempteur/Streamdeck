@@ -1,0 +1,65 @@
+/* InfoDisplayOverlay : plein écran, par-dessus tout le reste (popups compris). */
+.infodisplay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.infodisplay-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    cursor: default;
+}
+
+.infodisplay-text {
+    color: #fff;
+    font-weight: 700;
+    font-size: clamp(48px, 14vw, 160px);
+    letter-spacing: 0.02em;
+    text-align: center;
+    padding: 0 24px;
+    cursor: default;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Météo / heure dans le monde (v1.34.6) : mise en page verticale plutôt que le très gros chiffre seul de l'horloge —
+   il y a plusieurs informations à montrer (icône, température ou heure, description ou libellé, région). */
+.infodisplay-weather {
+    display: flex; flex-direction: column; align-items: center; gap: 10px; cursor: default; color: #fff;
+}
+.infodisplay-weather .infodisplay-text { font-size: clamp(40px, 12vw, 120px); }
+.infodisplay-weather-icon { font-size: clamp(40px, 10vw, 90px); opacity: .9; }
+.infodisplay-weather-desc { font-size: clamp(16px, 3vw, 28px); opacity: .8; }
+.infodisplay-weather-place { font-size: clamp(14px, 2.4vw, 22px); opacity: .6; }
+
+.infodisplay-close {
+    position: absolute;
+    top: max(16px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+    width: 48px;
+    height: 48px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.infodisplay-close:hover,
+.infodisplay-close:focus-visible {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+@media (max-width: 480px) {
+    .infodisplay-close { width: 44px; height: 44px; font-size: 18px; }
+}

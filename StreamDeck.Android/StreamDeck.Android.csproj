@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>StreamDeck.Mobile</RootNamespace>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCssItems>false</EnableDefaultCssItems>
+
+    <!-- Identité de l'application (modifie l'identifiant si tu veux le tien) -->
+    <ApplicationTitle>Stream Deck</ApplicationTitle>
+    <ApplicationId>com.streamdeck.tablet</ApplicationId>
+    <ApplicationDisplayVersion>1.8</ApplicationDisplayVersion>
+    <ApplicationVersion>9</ApplicationVersion>
+    <SupportedOSPlatformVersion>24.0</SupportedOSPlatformVersion>
+
+    <!-- APK installable directement (et non AAB, réservé au Play Store) -->
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+
+  <!-- En Release : arm64 uniquement (tous les téléphones et tablettes récents), build plus rapide et APK plus léger -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>android-arm64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#0B0D12" />
+    <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#0B0D12" BaseSize="128,128" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
+    <ProjectReference Include="..\StreamDeck.Shared\StreamDeck.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

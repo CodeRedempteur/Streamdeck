@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>StreamDeck</RootNamespace>
+    <AssemblyName>StreamDeck.Shared</AssemblyName>
+    <PackageId>StreamDeck.Shared</PackageId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Version flottante : évite un conflit de versions avec les paquets Blazor des hôtes (NU1605) -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.*" />
+  </ItemGroup>
+
+</Project>

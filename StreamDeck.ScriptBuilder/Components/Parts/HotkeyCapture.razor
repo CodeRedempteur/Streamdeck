@@ -1,0 +1,31 @@
+@* Capture une combinaison de touches en écoutant le clavier pendant qu'on a cliqué ici — sans JavaScript : les
+   modificateurs et le nom de la touche viennent directement de KeyboardEventArgs. Échap annule la capture. *@
+
+<button type="button" class="settings-btn hotkey-capture@(_capturing ? " is-capturing" : "")"
+        @onclick="StartCapture" @onkeydown="OnKeyDown" @onkeydown:preventDefault="_capturing" @onblur="StopCapture">
+    <i class="fa-solid fa-keyboard"></i>
+    <span>@(_capturing ? "Appuie sur la combinaison…" : (string.IsNullOrEmpty(Value) ? "Cliquer pour définir" : Value))</span>
+</button>
+
+@code {
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+
+    private bool _capturing;
+
+    private void StartCapture() => _capturing = true;
+    private void StopCapture() => _capturing = false;
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (!_capturing) return;
+
+        if (e.Key == "Escape") { _capturing = false; return; }
+
+        var combo = HotkeyKeys.FromKeyboardEvent(e.CtrlKey, e.AltKey, e.ShiftKey, e.MetaKey, e.Key);
+        if (combo is null) return; // touche modificatrice seule (Ctrl, Alt…) : on attend la touche qui l'accompagne
+
+        _capturing = false;
+        await ValueChanged.InvokeAsync(HotkeyKeys.Format(combo));
+    }
+}

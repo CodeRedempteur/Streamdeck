@@ -1,0 +1,162 @@
+@* Affichage plein écran (bouton "Affichage plein écran") : image, heure, date, jour de la semaine, météo ou heure
+   dans le monde (v1.34.6). Couvre tout l'écran de l'appli (téléphone, tablette ou PC via StreamDeck.Desktop), avec
+   une croix pour fermer et une fermeture automatique si une durée a été réglée (0 = infini, fermeture manuelle
+   seulement). Météo/heure dans le monde : appli uniquement (InfoTarget.Pc reste heure/date/jour/image — les afficher
+   sur le PC piloté passerait par server.ps1, en PowerShell, hors de portée de ce changement). *@
+@implements IDisposable
+@inject WeatherService Weather
+
+@if (Button is not null)
+{
+    <div class="infodisplay" @onclick="OnBackdropClick">
+        <button type="button" class="infodisplay-close" @onclick="Close" @onclick:stopPropagation="true" aria-label="Fermer" title="Fermer">
+            <i class="fa-solid fa-xmark"></i>
+        </button>
+
+        @switch (Button.InfoKind)
+        {
+            case InfoKind.Image:
+                <img class="infodisplay-image" src="@Button.InfoImageUrl" alt="@Button.Label" @onclick:stopPropagation="true" />
+                break;
+
+            case InfoKind.Weather:
+                <div class="infodisplay-weather" @onclick:stopPropagation="true">
+                    @if (string.IsNullOrWhiteSpace(Button.InfoWeatherLocationName))
+                    {
+                        <span class="infodisplay-text">Région non configurée.</span>
+                    }
+                    else if (_weather is null)
+                    {
+                        <span class="infodisplay-text"><i class="fa-solid fa-spinner fa-spin"></i></span>
+                    }
+                    else if (!_weather.Success)
+                    {
+                        <span class="infodisplay-text">@(_weather.Error ?? "Météo indisponible.")</span>
+                    }
+                    else
+                    {
+                        var info = WeatherService.Describe(_weather.WeatherCode, _weather.IsDay);
+                        <i class="fa-solid @(info.Icon) infodisplay-weather-icon"></i>
+                        <span class="infodisplay-text">@Math.Round(_weather.TemperatureC) °C</span>
+                        <span class="infodisplay-weather-desc">@(info.Description)</span>
+                        <span class="infodisplay-weather-place">@Button.InfoWeatherLocationName</span>
+                    }
+                </div>
+                break;
+
+            case InfoKind.WorldClock:
+                <div class="infodisplay-weather" @onclick:stopPropagation="true">
+                    @if (string.IsNullOrWhiteSpace(Button.InfoWorldClockTimeZoneId))
+                    {
+                        <span class="infodisplay-text">Fuseau non configuré.</span>
+                    }
+                    else if (_worldClockError)
+                    {
+                        <span class="infodisplay-text">Fuseau horaire introuvable.</span>
+                    }
+                    else
+                    {
+                        <i class="fa-solid fa-earth-americas infodisplay-weather-icon"></i>
+                        <span class="infodisplay-text">@_text</span>
+                        <span class="infodisplay-weather-place">@(string.IsNullOrWhiteSpace(Button.InfoWorldClockLabel) ? Button.InfoWorldClockTimeZoneId : Button.InfoWorldClockLabel)</span>
+                    }
+                </div>
+                break;
+
+            default:
+                <span class="infodisplay-text" @onclick:stopPropagation="true">@_text</span>
+                break;
+        }
+    </div>
+}
+
+@code {
+    private static readonly System.Globalization.CultureInfo French = System.Globalization.CultureInfo.GetCultureInfo("fr-FR");
+
+    private DeckButton? _button;
+    private Timer? _timer;
+    private Timer? _closeTimer;
+    private string _text = "";
+    private WeatherResult? _weather;
+    private bool _worldClockError;
+
+    [Parameter] public DeckButton? Button { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(Button, _button)) return;
+
+        _button = Button;
+        _timer?.Dispose();
+        _timer = null;
+        _closeTimer?.Dispose();
+        _closeTimer = null;
+        _weather = null;
+        _worldClockError = false;
+
+        if (Button is null) return;
+
+        if (Button.InfoKind == InfoKind.Weather)
+        {
+            _ = RefreshWeather(Button);
+            // Météo : rafraîchie toutes les 10 minutes (même durée que le cache de WeatherService, pas la peine
+            // d'interroger plus souvent), pas chaque seconde comme l'horloge.
+            _timer = new Timer(_ => InvokeAsync(() => RefreshWeather(Button)), null, TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10));
+        }
+        else if (Button.InfoKind != InfoKind.Image)
+        {
+            RefreshText();
+            _timer = new Timer(_ => InvokeAsync(() => { RefreshText(); StateHasChanged(); }), null, 1000, 1000);
+        }
+
+        if (Button.InfoDurationSeconds > 0)
+        {
+            _closeTimer = new Timer(_ => InvokeAsync(Close), null, TimeSpan.FromSeconds(Button.InfoDurationSeconds), Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private async Task RefreshWeather(DeckButton button)
+    {
+        if (string.IsNullOrWhiteSpace(button.InfoWeatherLocationName)) return;
+        try { _weather = await Weather.GetCurrentAsync(button.InfoWeatherLat, button.InfoWeatherLon); }
+        catch (Exception ex) { _weather = new WeatherResult { Error = ex.Message }; }
+        if (ReferenceEquals(_button, button)) StateHasChanged();
+    }
+
+    private void RefreshText()
+    {
+        var now = DateTime.Now;
+        if (Button?.InfoKind == InfoKind.WorldClock)
+        {
+            try
+            {
+                var tz = TimeZoneInfo.FindSystemTimeZoneById(Button.InfoWorldClockTimeZoneId);
+                _text = TimeZoneInfo.ConvertTime(now, tz).ToString("HH:mm:ss");
+                _worldClockError = false;
+            }
+            catch (Exception) { _worldClockError = true; }
+            return;
+        }
+
+        _text = Button?.InfoKind switch
+        {
+            InfoKind.Date => Capitalize(now.ToString("dddd d MMMM yyyy", French)),
+            InfoKind.DayOfWeek => Capitalize(now.ToString("dddd", French)),
+            _ => now.ToString("HH:mm:ss")
+        };
+    }
+
+    private static string Capitalize(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+    /// <summary>Un clic en dehors de l'image/du texte ferme aussi (en plus de la croix) : pratique en plein écran.</summary>
+    private Task OnBackdropClick() => Close();
+
+    private Task Close() => OnClose.InvokeAsync();
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _closeTimer?.Dispose();
+    }
+}

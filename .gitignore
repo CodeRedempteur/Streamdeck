@@ -1,0 +1,27 @@
+bin/
+obj/
+publish/
+.vs/
+*.user
+
+# --- Build .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.tmp
+
+# --- Secrets : ne jamais versionner
+*.keystore
+*.jks
+*.pfx
+*.p12
+.env
+.env.*
+
+# --- Config locale du serveur PC (contient le SECRET / token)
+PcServer/config.txt
+
+# --- Script perso (lien vers un site de streaming tiers)
+PcServer/Script/SerieAtm.ps1

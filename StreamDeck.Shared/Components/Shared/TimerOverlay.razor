@@ -1,0 +1,54 @@
+@* v1.36.1, "le timer remplace le nom du bouton sur le bouton" : le décompte/chrono en cours ne s'affiche plus en
+   plein écran — il s'affiche directement SUR la touche d'origine (voir Home.razor/KeyTile, TimerFormat). Ce
+   composant ne garde plus que l'étape "en attente" (Pending) : demander la durée avant de démarrer réellement
+   (bouton Timer avec PromptDuration, ex. "gâteau", durée différente à chaque fois). Une fois confirmée, Pending
+   repasse à faux et ce popup se referme tout seul — le compte continue sur la touche. *@
+@implements IDisposable
+@inject TimerService Timer
+
+@if (Timer.Current is { Pending: true } state)
+{
+    <div class="infodisplay timerdisplay">
+        <button type="button" class="infodisplay-close" @onclick="Cancel" aria-label="Annuler" title="Annuler">
+            <i class="fa-solid fa-xmark"></i>
+        </button>
+
+        <div class="timerdisplay-pending">
+            <span class="timerdisplay-label">@state.Label</span>
+            <div class="timercfg-duration">
+                <label class="timercfg-duration-field"><span>h</span><NumberStepper Value="_pendingHours" ValueChanged="@(v => _pendingHours = v)" Min="0" Max="23" /></label>
+                <label class="timercfg-duration-field"><span>min</span><NumberStepper Value="_pendingMinutes" ValueChanged="@(v => _pendingMinutes = v)" Min="0" Max="59" /></label>
+                <label class="timercfg-duration-field"><span>s</span><NumberStepper Value="_pendingSeconds" ValueChanged="@(v => _pendingSeconds = v)" Min="0" Max="59" /></label>
+            </div>
+            <button type="button" class="settings-btn timerdisplay-start" @onclick="ConfirmPending">
+                <i class="fa-solid fa-play"></i><span>Démarrer</span>
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private int _pendingHours;
+    private int _pendingMinutes = 5;
+    private int _pendingSeconds;
+
+    protected override void OnInitialized()
+    {
+        Timer.Changed += OnTimerChanged;
+    }
+
+    private void OnTimerChanged() => InvokeAsync(StateHasChanged);
+
+    private Task ConfirmPending()
+    {
+        Timer.ConfirmPending(_pendingHours * 3600 + _pendingMinutes * 60 + _pendingSeconds);
+        return Task.CompletedTask;
+    }
+
+    private Task Cancel() { Timer.Stop(); return Task.CompletedTask; }
+
+    public void Dispose()
+    {
+        Timer.Changed -= OnTimerChanged;
+    }
+}

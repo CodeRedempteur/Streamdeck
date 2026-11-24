@@ -1,0 +1,11 @@
+@* v1.34.16, demandé explicitement ("créer des config tel depuis le pc" + "l'exact même interface que sur l'app de
+   téléphone" + "plusieurs template") : onglet « Téléphone ». Depuis v1.35, le corps (liste + éditeur) vit dans
+   PhoneTemplatesPanel.razor (StreamDeck.ScriptBuilder/Components/Parts) pour pouvoir être réutilisé AUSSI dans la
+   config du Widget (demandé explicitement : "permet d'importé des page config pour le tel directement sur le
+   widget") — cette page ne fait plus que poser l'en-tête autour. *@
+@page "/phone"
+
+<div class="lib">
+    <MainHeader ActiveTab="phone" Subtitle="Compose des configurations de téléphone depuis le PC, et envoie-les en Wi-Fi." />
+    <PhoneTemplatesPanel />
+</div>

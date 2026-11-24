@@ -1,0 +1,709 @@
+@page "/"
+@implements IDisposable
+@inject ConfigService Config
+@inject ScriptRunner Runner
+@inject ActionService Actions
+@inject HistoryService History
+@inject SecurityService Security
+@inject IAppPlatform Platform
+@inject InfoDisplayService InfoDisplay
+@inject RequestPauseService Pause
+@inject FindPhoneService FindPhone
+@inject TimerService Timer
+
+<div class="home" style="@RootStyle">
+    <header class="home-bar">
+        @* v1.34.9 : "Stream Deck" en toutes lettres retiré — demandé explicitement, ça prenait de la place sur un
+           écran de téléphone étroit ; l'icône seule suffit à identifier l'appli (titre gardé en "title" pour
+           l'accessibilité/l'info-bulle). *@
+        <div class="home-brand" title="Stream Deck">
+            <span class="home-brand-mark"><i class="fa-solid fa-table-cells-large"></i></span>
+        </div>
+
+        @if (VisibleWorkspaces.Count > 1)
+        {
+            <nav class="home-tabs" aria-label="Espaces de travail">
+                @foreach (var w in VisibleWorkspaces)
+                {
+                    <button type="button" class="@TabClass(w)" @onclick="() => SelectWorkspace(w)" title="@w.Name">
+                        <KeyIcon Icon="@w.Icon" />
+                        <span>@w.Name</span>
+                    </button>
+                }
+            </nav>
+        }
+        else
+        {
+            <span class="home-tabs-spacer"></span>
+        }
+
+        <div class="home-bar-actions">
+            @* v1.34.9 : texte du statut ("Serveur en ligne"/"hors ligne"…) retiré — demandé explicitement, la
+               pastille de couleur (verte/rouge/orange en train de démarrer) suffit à elle seule ; le texte reste
+               disponible en info-bulle (title) plutôt que disparaître complètement. *@
+            <span class="@StatusClass" title="@StatusText">
+                <span class="home-status-dot"></span>
+            </span>
+
+            @if (CanWakeCurrentPc)
+            {
+                <button type="button" class="home-icon-btn" @onclick="WakeCurrentPcAsync" aria-label="@WakeLabel" title="@WakeLabel">
+                    <i class="fa-solid fa-power-off"></i>
+                </button>
+            }
+
+            @if (FindPhone.IsActive)
+            {
+                <button type="button" class="home-icon-btn is-ringing" @onclick="StopFindPhone" aria-label="Arrêter la sonnerie" title="Arrêter la sonnerie">
+                    <i class="fa-solid fa-bell-slash"></i>
+                </button>
+            }
+
+            <button type="button" class="@PauseClass" @onclick="TogglePause" aria-label="@PauseLabel" title="@PauseLabel">
+                <i class="@PauseIcon"></i>
+            </button>
+
+            <button type="button" class="home-icon-btn" @onclick="OpenHistory" aria-label="Historique" title="Historique">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+            </button>
+
+            <a class="home-icon-btn" href="/settings" aria-label="Réglages" title="Réglages">
+                <i class="fa-solid fa-gear"></i>
+            </a>
+        </div>
+    </header>
+
+    <div class="home-body" @ontouchstart="OnTouchStart" @ontouchend="OnTouchEnd">
+        @if (Buttons.Count == 0)
+        {
+            <div class="home-empty">
+                <span class="home-empty-icon"><i class="fa-solid fa-table-cells-large"></i></span>
+                <h2>@EmptyTitle</h2>
+                <p>Ajoute des boutons dans les réglages.</p>
+                <a class="home-cta" href="/settings">
+                    <i class="fa-solid fa-plus"></i><span>Ajouter un bouton</span>
+                </a>
+            </div>
+        }
+        else
+        {
+            <div class="home-deck" style="@DeckStyle">
+                @foreach (var p in CurrentPage.Layout(out _))
+                {
+                    var b = p.Button;
+
+                    <div class="home-cell" style="@CellStyle(p)">
+                        @switch (b.Kind)
+                        {
+                            case ButtonKind.VolumeSlider:
+                                <VolumeTile @key="b.Id" Button="b" Pc="PcOf(b)" OnResult="result => OnWidgetResult(b, result)" />
+                                break;
+
+                            case ButtonKind.MediaControls:
+                                <MediaTile @key="b.Id" Button="b" Pc="PcOf(b)" OnResult="result => OnWidgetResult(b, result)" />
+                                break;
+
+                            default:
+                                <KeyTile @key="b.Id" Button="@TimerDisplayButton(b)" State="@TileStateOf(b)" Interactive="b.Enabled" OnClick="() => Press(b)" />
+                                break;
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (PageCount > 1)
+    {
+        <footer class="home-pager">
+            <button type="button" class="home-pager-btn" @onclick="PreviousPage" disabled="@IsFirstPage" aria-label="Page précédente" title="Page précédente">
+                <i class="fa-solid fa-chevron-left"></i>
+            </button>
+
+            <div class="home-dots" role="tablist" aria-label="Pages">
+                @for (var i = 0; i < PageCount; i++)
+                {
+                    var index = i;
+                    <button type="button" class="@DotClass(index)" @onclick="() => GoToPage(index)" aria-label="@PageName(index)" title="@PageName(index)"></button>
+                }
+            </div>
+
+            <button type="button" class="home-pager-btn" @onclick="NextPage" disabled="@IsLastPage" aria-label="Page suivante" title="Page suivante">
+                <i class="fa-solid fa-chevron-right"></i>
+            </button>
+
+            <span class="home-pager-label">@PageName(PageIndex)</span>
+        </footer>
+    }
+</div>
+
+@if (_toast is not null)
+{
+    <div class="@ToastClass" role="status">
+        <i class="@ToastIcon"></i><span>@_toast</span>
+    </div>
+}
+
+<ConfirmDialog Open="@(_pending is not null)" Title="@PendingTitle" Message="@PendingMessage"
+               Mode="@PendingMode" HasPin="Config.Current.Security.HasPin" Verify="VerifyPin"
+               OnConfirm="ConfirmPending" OnCancel="CancelPending" />
+
+<HistoryPanel Open="_historyOpen" OnClose="CloseHistory" />
+
+<ChoicePopup Open="@(_pickerButton is not null)" Title="@(_pickerButton?.Label ?? "Choisir")"
+             Options="@(_pickerButton?.Options ?? new())" OnPick="PickOptionAsync" OnClose="ClosePicker" />
+
+<VariablePromptPopup Open="@(_promptTarget is not null)" Title="@(_promptTarget?.Option?.Label ?? _promptTarget?.Button.Label ?? "")"
+                      Variables="@(_promptTarget?.Option?.Variables ?? _promptTarget?.Button.Variables ?? new List<ButtonVariable>())"
+                      OnConfirm="ConfirmPromptAsync" OnCancel="CancelPrompt" />
+
+<InfoDisplayOverlay Button="_infoButton" OnClose="CloseInfoDisplay" />
+<TimerOverlay />
+
+@code {
+    private const int IdleCheckSeconds = 10;
+    private const int WakeCheckSeconds = 3;
+    private const int PagerHeight = 56;
+    private const double SwipeDistance = 70;
+
+    private static readonly TimeSpan WakeWatchDuration = TimeSpan.FromMinutes(3);
+
+    private readonly Dictionary<Guid, string> _states = new();
+    private readonly Dictionary<Guid, CancellationTokenSource> _running = new();
+    private readonly CancellationTokenSource _cts = new();
+
+    private string? _toast;
+    private string _toastKind = "is-ok";
+    private int _toastSeq;
+
+    // Surveillance du serveur du PC de l'espace affiché.
+    private bool? _online;
+    private Guid _monitoredPcId;
+    private int _secondsToCheck;
+
+    // Après un réveil : on surveille le serveur de plus près jusqu'à ce qu'il réponde.
+    private DateTime? _wakeUntil;
+    private Guid _wakePcId;
+
+    // Bouton en attente de confirmation / PIN.
+    private DeckButton? _pending;
+    private bool _historyOpen;
+
+    // Glissement du doigt pour changer de page.
+    private double _touchX;
+    private double _touchY;
+
+    // ----- Espace / page courants -----
+
+    private List<Workspace> Workspaces => Config.Current.Workspaces;
+    private List<Workspace> VisibleWorkspaces => Workspaces.Where(w => w.Enabled).ToList();
+
+    /// <summary>Espace actif, sauf s'il est désactivé (retombe sur le premier espace encore activé).</summary>
+    private Workspace Workspace
+    {
+        get
+        {
+            var active = Config.Current.ActiveWorkspace;
+            return active.Enabled ? active : VisibleWorkspaces.FirstOrDefault() ?? active;
+        }
+    }
+    private int PageCount => Workspace.Pages.Count;
+    private int PageIndex => Config.GetPageIndex(Workspace);
+    private DeckPage CurrentPage => Workspace.Pages[PageIndex];
+    private List<DeckButton> Buttons => CurrentPage.Buttons;
+
+    private PcProfile CurrentPc => Config.Current.PcFor(Workspace);
+    private PcProfile PcOf(DeckButton b) => Config.Current.PcFor(Workspace, b);
+
+    private bool IsFirstPage => PageIndex <= 0;
+    private bool IsLastPage => PageIndex >= PageCount - 1;
+
+    private string RootStyle => $"--pager-h:{(PageCount > 1 ? PagerHeight : 0)}px";
+
+    private string DeckStyle
+    {
+        get
+        {
+            var page = CurrentPage;
+            var gap = page.Spacing switch { Spacing.Tight => 8, Spacing.Wide => 28, _ => 16 };
+            var scale = page.IconSize switch { IconSize.Small => "0.8", IconSize.Large => "1.3", _ => "1" };
+            return $"--cols:{page.Columns};--rows:{page.Rows};--home-gap:{gap}px;--icon-scale:{scale}";
+        }
+    }
+
+    /// <summary>Position et taille d'une tuile dans la grille (les tuiles larges ou hautes couvrent plusieurs cases).</summary>
+    private static string CellStyle(Placement p)
+    {
+        var columns = Math.Max(1, p.Button.ColSpan);
+        var rows = Math.Max(1, p.Button.RowSpan);
+        var side = Math.Min(columns, rows);
+
+        return $"grid-column:{p.Column + 1} / span {columns};grid-row:{p.Row + 1} / span {rows};--tile-s:calc(var(--size) * {side})";
+    }
+
+    private string EmptyTitle =>
+        Workspace.Pages.All(p => p.Buttons.Count == 0) ? "Aucun bouton" : "Page vide";
+
+    private string TabClass(Workspace w) => w.Id == Workspace.Id ? "home-tab is-active" : "home-tab";
+    private string DotClass(int index) => index == PageIndex ? "home-dot is-active" : "home-dot";
+
+    private string PageName(int index)
+    {
+        var name = Workspace.Pages[index].Name;
+        var number = $"Page {index + 1}";
+        return string.IsNullOrWhiteSpace(name) ? number : $"{number} : {name.Trim()}";
+    }
+
+    private void SelectWorkspace(Workspace w) => Config.SetActiveWorkspace(w.Id);
+
+    private void GoToPage(int index) => Config.SetPageIndex(Workspace, index);
+    private void PreviousPage() => GoToPage(PageIndex - 1);
+    private void NextPage() => GoToPage(PageIndex + 1);
+
+    private void OnTouchStart(TouchEventArgs e)
+    {
+        if (e.Touches.Length == 0) return;
+        _touchX = e.Touches[0].ClientX;
+        _touchY = e.Touches[0].ClientY;
+    }
+
+    private void OnTouchEnd(TouchEventArgs e)
+    {
+        if (e.ChangedTouches.Length == 0 || PageCount < 2) return;
+
+        var dx = e.ChangedTouches[0].ClientX - _touchX;
+        var dy = e.ChangedTouches[0].ClientY - _touchY;
+
+        // Geste franchement horizontal uniquement (un simple appui ou un geste vertical ne change rien).
+        if (Math.Abs(dx) < SwipeDistance || Math.Abs(dx) < Math.Abs(dy) * 1.5) return;
+
+        if (dx < 0) NextPage(); else PreviousPage();
+    }
+
+    // ----- Statut du serveur -----
+
+    private bool IsWaking => _wakeUntil is not null && _wakePcId == CurrentPc.Id && _online != true;
+
+    private string StatusClass => IsWaking
+        ? "home-status is-waking"
+        : _online switch
+        {
+            true => "home-status is-online",
+            false => "home-status is-offline",
+            _ => "home-status"
+        };
+
+    private string StatusText
+    {
+        get
+        {
+            var text = IsWaking
+                ? "Démarrage du PC"
+                : _online switch
+                {
+                    true => "Serveur joignable",
+                    false => "Serveur injoignable",
+                    _ => "Vérification"
+                };
+
+            // Avec plusieurs PC, on précise lequel est surveillé.
+            return Config.Current.Pcs.Count > 1 ? $"{CurrentPc.Name} : {text}" : text;
+        }
+    }
+
+    private bool CanWakeCurrentPc => WakeService.TryParseMac(CurrentPc.Mac, out _);
+    private string WakeLabel => $"Réveiller {CurrentPc.Name}";
+
+    // ----- Toast -----
+
+    private string ToastClass => $"home-toast {_toastKind}";
+
+    private string ToastIcon => _toastKind switch
+    {
+        "is-ok" => "fa-solid fa-circle-check",
+        "is-info" => "fa-solid fa-spinner fa-spin",
+        "is-warn" => "fa-solid fa-circle-exclamation",
+        _ => "fa-solid fa-circle-xmark"
+    };
+
+    // ----- Confirmation -----
+
+    private string PendingTitle => _pending?.Label ?? "Confirmer";
+    private ConfirmMode PendingMode => _pending?.Confirm ?? ConfirmMode.Confirm;
+
+    private string PendingMessage => _pending is null
+        ? string.Empty
+        : PendingMode == ConfirmMode.Pin
+            ? $"« {_pending.Label} » est une action sensible."
+            : $"Lancer « {_pending.Label} » ?";
+
+    private PinCheck VerifyPin(string pin) => Security.Check(Config.Current.Security, pin);
+
+    private void CancelPending() => _pending = null;
+
+    private async Task ConfirmPending()
+    {
+        var button = _pending;
+        _pending = null;
+
+        if (button is not null)
+            await RunAsync(button);
+    }
+
+    // ----- Historique -----
+
+    private void OpenHistory() => _historyOpen = true;
+    private void CloseHistory() => _historyOpen = false;
+
+    // ----- Boutons -----
+
+    private string StateOf(DeckButton b) => _states.GetValueOrDefault(b.Id, string.Empty);
+    private bool IsBusy(DeckButton b) => StateOf(b).Contains("is-busy", StringComparison.Ordinal);
+
+    // ----- Minuteur affiché directement sur sa touche (v1.36.1, "le timer remplace le nom du bouton sur le bouton") -----
+
+    /// <summary>État de la touche à afficher : celui réglé par Press/RunAsync, sauf pour un minuteur en cours, qui
+    /// prend le dessus (pulsation dédiée, mais reste cliquable — voir KeyTile.css, .is-timer-running).</summary>
+    private string TileStateOf(DeckButton b) => Timer.IsRunningFor(b.Id) ? "is-timer-running" : StateOf(b);
+
+    /// <summary>Bouton à afficher sur la touche : inchangé, sauf un bouton Timer dont le minuteur tourne — son nom
+    /// est alors remplacé par le compte (ou "…" en attente de la durée, voir TimerOverlay).</summary>
+    private DeckButton TimerDisplayButton(DeckButton b)
+    {
+        if (b.Kind != ButtonKind.Timer || Timer.Current is not { } state || !Timer.IsRunningFor(b.Id)) return b;
+
+        return new DeckButton
+        {
+            Id = b.Id,
+            Kind = b.Kind,
+            Label = state.Pending ? "…" : TimerFormat.Label(state),
+            Icon = b.Icon,
+            ImageUrl = b.ImageUrl,
+            Color = b.Color,
+            Enabled = b.Enabled,
+            ColSpan = b.ColSpan,
+            RowSpan = b.RowSpan
+        };
+    }
+
+    private void OnTimerChanged() => InvokeAsync(StateHasChanged);
+
+    protected override void OnInitialized()
+    {
+        _ = MonitorAsync(_cts.Token);
+        InfoDisplay.Requested += OnInfoDisplayRequested;
+        Pause.Changed += OnPauseChanged;
+        FindPhone.Changed += OnFindPhoneChanged;
+        Timer.Changed += OnTimerChanged;
+    }
+
+    // ----- Pause de l'envoi au serveur -----
+
+    private string PauseClass => Pause.Paused ? "home-icon-btn is-paused" : "home-icon-btn";
+    private string PauseIcon => Pause.Paused ? "fa-solid fa-play" : "fa-solid fa-pause";
+    private string PauseLabel => Pause.Paused ? "Réactiver l'envoi au serveur" : "Mettre en pause l'envoi au serveur";
+
+    private void TogglePause()
+    {
+        Buzz();
+        Pause.Toggle();
+    }
+
+    private void OnPauseChanged() => InvokeAsync(StateHasChanged);
+
+    // ----- Retrouver le téléphone -----
+
+    private void StopFindPhone()
+    {
+        Buzz();
+        FindPhone.Stop();
+    }
+
+    /// <summary>Prévenu par FindPhoneService : déclenché ici, ailleurs (voix), ou arrêté (bouton ou délai écoulé).</summary>
+    private void OnFindPhoneChanged() => InvokeAsync(StateHasChanged);
+
+    // ----- Affichage plein écran -----
+
+    private DeckButton? _infoButton;
+
+    /// <summary>Prévenu par ActionService (appui normal OU commande vocale, même depuis le service Android en tâche
+    /// de fond) quand un bouton "Affichage plein écran" cible l'appli.</summary>
+    private void OnInfoDisplayRequested(DeckButton button) => InvokeAsync(() =>
+    {
+        _infoButton = button;
+        StateHasChanged();
+    });
+
+    private void CloseInfoDisplay()
+    {
+        _infoButton = null;
+        StateHasChanged();
+    }
+
+    /// <summary>Vérifie le serveur toutes les 10 s (toutes les 3 s pendant qu'un PC démarre).</summary>
+    private async Task MonitorAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var pc = CurrentPc;
+
+                // Changement d'espace vers un autre PC : on repart de zéro pour ce PC.
+                if (pc.Id != _monitoredPcId)
+                {
+                    _monitoredPcId = pc.Id;
+                    _online = null;
+                    _secondsToCheck = 0;
+                    await InvokeAsync(StateHasChanged);
+                }
+
+                if (--_secondsToCheck <= 0)
+                {
+                    var result = await Runner.PingAsync(pc.ServerUrl, ct);
+                    if (ct.IsCancellationRequested) return;
+
+                    // Le PC affiché a changé pendant la vérification : ce résultat ne le concerne plus.
+                    if (pc.Id == CurrentPc.Id)
+                    {
+                        _online = result.Ok;
+
+                        if (_wakeUntil is not null && _wakePcId == pc.Id)
+                        {
+                            if (result.Ok)
+                            {
+                                _wakeUntil = null;
+                                ShowToast($"{pc.Name} est allumé", "is-ok", 3000);
+                            }
+                            else if (DateTime.UtcNow > _wakeUntil)
+                            {
+                                _wakeUntil = null;
+                            }
+                        }
+
+                        var watching = _wakeUntil is not null && _wakePcId == pc.Id;
+                        _secondsToCheck = watching ? WakeCheckSeconds : IdleCheckSeconds;
+                        await InvokeAsync(StateHasChanged);
+                    }
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(1), ct);
+            }
+        }
+        catch (Exception)
+        {
+            // Page quittée (annulation) ou composant déjà supprimé : rien à faire, et surtout ne rien laisser remonter.
+        }
+    }
+
+    private void Buzz()
+    {
+        if (Config.Current.Display.Haptics && Platform.CanVibrate)
+            Platform.Vibrate();
+    }
+
+    /// <summary>Appui sur une tuile : annule un enchaînement en cours, demande confirmation si besoin, sinon exécute.</summary>
+    private async Task Press(DeckButton b)
+    {
+        if (!b.Enabled) return;
+
+        Buzz();
+
+        if (IsBusy(b))
+        {
+            // Seul un enchaînement en cours peut être interrompu.
+            if (_running.TryGetValue(b.Id, out var running)) running.Cancel();
+            return;
+        }
+
+        if (b.Kind == ButtonKind.Picker)
+        {
+            _pickerButton = b;
+            return;
+        }
+
+        if (b.HasPromptVariables)
+        {
+            _promptTarget = (b, null);
+            return;
+        }
+
+        if (b.Confirm != ConfirmMode.None)
+        {
+            _pending = b;
+            return;
+        }
+
+        await RunAsync(b);
+    }
+
+    // ----- Choix multiple -----
+
+    private DeckButton? _pickerButton;
+
+    private void ClosePicker() => _pickerButton = null;
+
+    private async Task PickOptionAsync(ChoiceOption option)
+    {
+        var button = _pickerButton;
+        if (button is null) return;
+
+        if (option.HasPromptVariables)
+        {
+            _promptTarget = (button, option);
+            return;
+        }
+
+        await RunOptionAsync(button, option, null);
+    }
+
+    private async Task RunOptionAsync(DeckButton button, ChoiceOption option, IReadOnlyDictionary<string, string>? prompted)
+    {
+        Buzz();
+        var workspace = Workspace;
+        var result = await Actions.ExecuteOptionAsync(workspace, button, option, prompted, _cts.Token);
+
+        var kind = !result.Ok ? "is-err" : result.Warning ? "is-warn" : "is-ok";
+        History.Add(workspace.Name, $"{button.Label} : {option.Label}", result.Message, kind);
+        ShowToast(result.Message, kind, result.Ok ? 1800 : 3000);
+    }
+
+    // ----- Variables "au lancement" -----
+
+    private (DeckButton Button, ChoiceOption? Option)? _promptTarget;
+
+    private void CancelPrompt() => _promptTarget = null;
+
+    private async Task ConfirmPromptAsync(IReadOnlyDictionary<string, string> values)
+    {
+        var target = _promptTarget;
+        _promptTarget = null;
+        if (target is null) return;
+
+        if (target.Value.Option is { } option)
+            await RunOptionAsync(target.Value.Button, option, values);
+        else
+            await RunAsync(target.Value.Button, values);
+    }
+
+    private async Task RunAsync(DeckButton b, IReadOnlyDictionary<string, string>? prompted = null)
+    {
+        var workspace = Workspace;
+        var pc = PcOf(b);
+        var isSequence = b.Kind == ButtonKind.Sequence;
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        if (isSequence) _running[b.Id] = cts;
+
+        _states[b.Id] = isSequence ? "is-busy is-cancellable" : "is-busy";
+        StateHasChanged();
+
+        var progress = new Progress<string>(text => ShowToast(text, "is-info", 60000));
+
+        RunResult result;
+        try
+        {
+            result = await Actions.ExecuteAsync(workspace, b, progress, prompted, cts.Token);
+        }
+        catch (Exception ex)
+        {
+            // Filet de sécurité : ce service ne lève rien, mais une exception ici bloquerait toute l'app.
+            result = new RunResult(false, $"Erreur inattendue ({ex.GetType().Name})");
+        }
+
+        _running.Remove(b.Id);
+
+        if (b.Kind == ButtonKind.Wake && result.Ok)
+            StartWakeWatch(pc);
+
+        // Un enchaînement qui commence par un réveil : on surveille aussi le PC.
+        if (isSequence && result.Ok && b.Steps.Any(s => s.Type == StepType.Wake))
+            StartWakeWatch(pc);
+
+        var kind = !result.Ok ? "is-err" : result.Warning ? "is-warn" : "is-ok";
+        _states[b.Id] = kind;
+        History.Add(workspace.Name, b.Label, result.Message, kind);
+        ShowToast(result.Message, kind, result.Ok ? 1800 : 3000);
+        StateHasChanged();
+
+        try
+        {
+            await Task.Delay(result.Ok ? 1200 : 3000, _cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Page quittée.
+        }
+        finally
+        {
+            _states.Remove(b.Id);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>Petit bouton de la barre : réveille le PC de l'espace affiché.</summary>
+    private async Task WakeCurrentPcAsync()
+    {
+        Buzz();
+
+        var pc = CurrentPc;
+        var result = await Actions.WakeAsync(pc);
+
+        if (result.Ok) StartWakeWatch(pc);
+
+        var kind = result.Ok ? "is-ok" : "is-err";
+        History.Add(Workspace.Name, $"Réveil de {pc.Name}", result.Message, kind);
+        ShowToast(result.Message, kind, result.Ok ? 1800 : 3000);
+    }
+
+    private void StartWakeWatch(PcProfile pc)
+    {
+        _wakePcId = pc.Id;
+        _wakeUntil = DateTime.UtcNow + WakeWatchDuration;
+        _secondsToCheck = 0; // vérification immédiate puis toutes les 3 s
+    }
+
+    /// <summary>Les tuiles volume / média ne signalent que les problèmes.</summary>
+    private Task OnWidgetResult(DeckButton b, RunResult result)
+    {
+        var kind = !result.Ok ? "is-err" : "is-warn";
+        var label = b.Kind == ButtonKind.VolumeSlider ? "Volume" : "Média";
+
+        History.Add(Workspace.Name, label, result.Message, kind);
+        ShowToast(result.Message, kind, 3000);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void ShowToast(string message, string kind, int milliseconds)
+    {
+        _toast = message;
+        _toastKind = kind;
+        _ = HideToastLaterAsync(++_toastSeq, milliseconds);
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HideToastLaterAsync(int seq, int milliseconds)
+    {
+        try
+        {
+            await Task.Delay(milliseconds, _cts.Token);
+            if (seq != _toastSeq) return;
+            _toast = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception)
+        {
+            // Page quittée.
+        }
+    }
+
+    public void Dispose()
+    {
+        InfoDisplay.Requested -= OnInfoDisplayRequested;
+        Pause.Changed -= OnPauseChanged;
+        FindPhone.Changed -= OnFindPhoneChanged;
+        Timer.Changed -= OnTimerChanged;
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

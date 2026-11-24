@@ -1,0 +1,190 @@
+@inject FileSystemBrowser Browser
+
+<Modal Open="Open" Title="@Title" Icon="fa-solid fa-folder-open" OnClose="OnClose">
+    <ChildContent>
+        <div class="fb">
+            <div class="fb-shortcuts" role="group" aria-label="Raccourcis">
+                @foreach (var s in _shortcuts)
+                {
+                    <button type="button" class="fb-chip" @onclick="() => GoTo(s.Path)" title="@s.Path">
+                        <i class="@s.Icon"></i><span>@s.Label</span>
+                    </button>
+                }
+            </div>
+
+            <div class="fb-bar">
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="Up" disabled="@(_listing?.Parent is null || _loading)" aria-label="Dossier parent" title="Dossier parent">
+                    <i class="fa-solid fa-arrow-up"></i>
+                </button>
+                <span class="settings-input settings-input-plain fb-path">
+                    <input @bind="_typedPath" @bind:event="oninput" @onkeydown="OnPathKey" spellcheck="false" autocomplete="off" aria-label="Chemin" />
+                </span>
+                <button type="button" class="settings-btn settings-btn-icon" @onclick="GoTyped" aria-label="Aller" title="Aller à ce chemin">
+                    <i class="fa-solid fa-arrow-right"></i>
+                </button>
+            </div>
+
+            <div class="fb-tools">
+                <span class="settings-input fb-search">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input @bind="_filter" @bind:event="oninput" placeholder="Filtrer par nom" autocomplete="off" aria-label="Filtrer" />
+                </span>
+                @if (Mode != BrowseMode.Folder && Extensions is { Count: > 0 })
+                {
+                    <button type="button" class="@(_showAll ? "fb-toggle is-on" : "fb-toggle")" @onclick="ToggleAll">
+                        <i class="fa-solid fa-filter"></i><span>@(_showAll ? "Tous les fichiers" : "Programmes seulement")</span>
+                    </button>
+                }
+            </div>
+
+            @if (_loading)
+            {
+                <p class="fb-empty"><i class="fa-solid fa-spinner fa-spin"></i> Lecture du dossier…</p>
+            }
+            else
+            {
+                @if (_listing?.Error is not null)
+                {
+                    <p class="fb-error"><i class="fa-solid fa-circle-exclamation"></i> @_listing.Error</p>
+                }
+
+                <ul class="fb-list">
+                    @foreach (var entry in Visible)
+                    {
+                        <li>
+                            <button type="button" class="fb-item" @onclick="() => Click(entry)" title="@entry.Path">
+                                <i class="@IconOf(entry)"></i>
+                                <span class="fb-name">@entry.Name</span>
+                            </button>
+                        </li>
+                    }
+                </ul>
+
+                @if (!Visible.Any() && _listing?.Error is null)
+                {
+                    <p class="fb-empty">Rien à afficher ici@(_showAll || Extensions is null ? "" : " (essaie « Tous les fichiers »)").</p>
+                }
+            }
+        </div>
+    </ChildContent>
+
+    <Footer>
+        <span class="fb-current" title="@_listing?.Path">@_listing?.Path</span>
+        @if (Mode != BrowseMode.File)
+        {
+            <button type="button" class="settings-btn settings-btn-primary" @onclick="PickCurrent" disabled="@(_listing is null || _listing.Error is not null || _loading)">
+                <i class="fa-solid fa-check"></i><span>Choisir ce dossier</span>
+            </button>
+        }
+    </Footer>
+</Modal>
+
+@code {
+    private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(10);
+
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public BrowseMode Mode { get; set; } = BrowseMode.File;
+    [Parameter] public string? StartPath { get; set; }
+    [Parameter] public IReadOnlyCollection<string>? Extensions { get; set; }
+    [Parameter] public EventCallback<string> OnPick { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private IReadOnlyList<FsShortcut> _shortcuts = Array.Empty<FsShortcut>();
+    private FsListing? _listing;
+    private string _typedPath = string.Empty;
+    private string _filter = string.Empty;
+    private bool _showAll;
+    private bool _wasOpen;
+    private bool _loading;
+    private int _loadId;
+
+    private string Title => Mode switch
+    {
+        BrowseMode.Folder => "Choisir un dossier",
+        BrowseMode.FileOrFolder => "Choisir un fichier ou un dossier",
+        _ => "Choisir un fichier"
+    };
+
+    private IEnumerable<FsEntry> Visible =>
+        (_listing?.Entries ?? Array.Empty<FsEntry>())
+        .Where(e => _filter.Length == 0 || e.Name.Contains(_filter, StringComparison.CurrentCultureIgnoreCase));
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Open) { _wasOpen = false; return; }
+        if (_wasOpen) return;
+
+        // À l'ouverture : on repart du chemin déjà saisi (ou du Bureau).
+        _wasOpen = true;
+        _filter = string.Empty;
+        _showAll = false;
+        _loading = true;
+
+        // Lecture des disques et du dossier hors du fil de l'interface : un lecteur réseau lent ne la fige plus.
+        try { _shortcuts = await Task.Run(() => Browser.Shortcuts()); }
+        catch (Exception) { _shortcuts = Array.Empty<FsShortcut>(); }
+
+        await LoadAsync(StartPath);
+    }
+
+    private async Task LoadAsync(string? path)
+    {
+        var id = ++_loadId;
+        _loading = true;
+
+        FsListing listing;
+        try
+        {
+            var extensions = _showAll ? null : Extensions;
+            var foldersOnly = Mode == BrowseMode.Folder;
+            var work = Task.Run(() => Browser.List(path, extensions, foldersOnly));
+
+            listing = await Task.WhenAny(work, Task.Delay(ReadTimeout)) == work
+                ? await work
+                : new FsListing(path ?? string.Empty, null, Array.Empty<FsEntry>(), "Ce dossier met trop de temps à répondre (lecteur réseau déconnecté ?).");
+        }
+        catch (Exception ex)
+        {
+            listing = new FsListing(path ?? string.Empty, null, Array.Empty<FsEntry>(), ex.Message);
+        }
+
+        if (id != _loadId) return;
+
+        _listing = listing;
+        _typedPath = string.IsNullOrEmpty(listing.Path) ? path ?? string.Empty : listing.Path;
+        _filter = string.Empty;
+        _loading = false;
+    }
+
+    private Task GoTo(string path) => LoadAsync(path);
+    private Task GoTyped() => LoadAsync(_typedPath);
+    private Task Up() => _listing?.Parent is { } parent ? LoadAsync(parent) : Task.CompletedTask;
+
+    private Task ToggleAll()
+    {
+        _showAll = !_showAll;
+        return LoadAsync(_listing?.Path);
+    }
+
+    private Task OnPathKey(KeyboardEventArgs e) => e.Key == "Enter" ? GoTyped() : Task.CompletedTask;
+
+    private async Task Click(FsEntry entry)
+    {
+        if (entry.IsDirectory) { await LoadAsync(entry.Path); return; }
+        await OnPick.InvokeAsync(entry.Path);
+    }
+
+    private Task PickCurrent() => _listing is null ? Task.CompletedTask : OnPick.InvokeAsync(_listing.Path);
+
+    private static string IconOf(FsEntry e)
+    {
+        if (e.IsDirectory) return "fa-solid fa-folder";
+        return System.IO.Path.GetExtension(e.Name).ToLowerInvariant() switch
+        {
+            ".exe" or ".msi" => "fa-solid fa-gear",
+            ".lnk" => "fa-solid fa-link",
+            ".bat" or ".cmd" or ".ps1" => "fa-solid fa-terminal",
+            _ => "fa-solid fa-file"
+        };
+    }
+}
